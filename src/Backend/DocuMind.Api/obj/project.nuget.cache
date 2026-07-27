@@ -1,0 +1,24 @@
+{
+  "version": 2,
+  "dgSpecHash": "Yby74UB1vWM=",
+  "success": true,
+  "projectFilePath": "C:\\Users\\eisa_m1\\Desktop\\Learning\\Neuer Ordner\\documind-ai\\src\\Backend\\DocuMind.Api\\DocuMind.Api.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\eisa_m1\\.nuget\\packages\\microsoft.aspnetcore.openapi\\10.0.10\\microsoft.aspnetcore.openapi.10.0.10.nupkg.sha512",
+    "C:\\Users\\eisa_m1\\.nuget\\packages\\microsoft.openapi\\2.0.0\\microsoft.openapi.2.0.0.nupkg.sha512"
+  ],
+  "logs": [
+    {
+      "code": "NU1903",
+      "level": "Warning",
+      "message": "Das Paket \"Microsoft.OpenApi\" 2.0.0 weist eine bekannte hoch Schweregrad-Sicherheitsanfälligkeit auf, https://github.com/advisories/GHSA-v5pm-xwqc-g5wc.",
+      "projectPath": "C:\\Users\\eisa_m1\\Desktop\\Learning\\Neuer Ordner\\documind-ai\\src\\Backend\\DocuMind.Api\\DocuMind.Api.csproj",
+      "warningLevel": 1,
+      "filePath": "C:\\Users\\eisa_m1\\Desktop\\Learning\\Neuer Ordner\\documind-ai\\src\\Backend\\DocuMind.Api\\DocuMind.Api.csproj",
+      "libraryId": "Microsoft.OpenApi",
+      "targetGraphs": [
+        "net10.0"
+      ]
+    }
+  ]
+}
