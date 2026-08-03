@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  db:
+    # We use a specific image that has PostgreSQL and pgvector pre-installed
+    image: ankane/pgvector:latest
+    container_name: documind_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: Password123!
+      POSTGRES_DB: documind
+    ports:
+      - "5432:5432"
+    volumes:
+      - documind_data:/var/lib/postgresql/data
+
+volumes:
+  documind_data:

@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("DocuMind.Api")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+0033070d55dbe80db5c2bcb22a68d17fc280318e")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+1e511385601cbbf3977d10639827406f6251ca54")]
 [assembly: System.Reflection.AssemblyProductAttribute("DocuMind.Api")]
 [assembly: System.Reflection.AssemblyTitleAttribute("DocuMind.Api")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
