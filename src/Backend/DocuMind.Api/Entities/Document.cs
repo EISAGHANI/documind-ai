@@ -13,6 +13,10 @@ public class Document
     public string StoragePath { get; set; } = string.Empty;
     public DateTime UploadedAt { get; set; } = DateTime.UtcNow;
     public DocumentStatus Status { get; set; } = DocumentStatus.Pending;
+    public DateTime? ProcessedAt { get; set; }
+
+    // Why processing failed, shown to the user when Status is Failed
+    public string? ProcessingError { get; set; }
 
     public List<DocumentChunk> Chunks { get; set; } = [];
 }

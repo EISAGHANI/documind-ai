@@ -1,6 +1,7 @@
 using DocuMind.Api.Contracts;
 using DocuMind.Api.Data;
 using DocuMind.Api.Entities;
+using DocuMind.Api.Processing;
 using DocuMind.Api.Storage;
 using DocuMind.Api.Tenancy;
 using Microsoft.AspNetCore.Mvc;
@@ -13,7 +14,8 @@ namespace DocuMind.Api.Controllers;
 public class DocumentsController(
     ApplicationDbContext db,
     IFileStorage storage,
-    ITenantProvider tenantProvider) : ControllerBase
+    ITenantProvider tenantProvider,
+    IDocumentProcessingQueue processingQueue) : ControllerBase
 {
     private const long MaxFileSizeBytes = 50 * 1024 * 1024;
     private static readonly byte[] PdfSignature = "%PDF-"u8.ToArray();
@@ -104,7 +106,32 @@ public class DocumentsController(
             throw;
         }
 
+        await processingQueue.EnqueueAsync(document.Id, cancellationToken);
+
         return CreatedAtAction(nameof(GetById), new { id = document.Id }, DocumentResponse.FromEntity(document));
+    }
+
+    // Queues a document for processing again, e.g. after a failure or a change of embedding model
+    [HttpPost("{id:guid}/reprocess")]
+    public async Task<ActionResult<DocumentResponse>> Reprocess(Guid id, CancellationToken cancellationToken)
+    {
+        var document = await db.Documents.FirstOrDefaultAsync(d => d.Id == id, cancellationToken);
+        if (document is null)
+        {
+            return NotFound();
+        }
+
+        if (document.Status is DocumentStatus.Pending or DocumentStatus.Processing)
+        {
+            return Problem("The document is already queued for processing.", statusCode: StatusCodes.Status409Conflict);
+        }
+
+        document.Status = DocumentStatus.Pending;
+        document.ProcessingError = null;
+        await db.SaveChangesAsync(cancellationToken);
+        await processingQueue.EnqueueAsync(document.Id, cancellationToken);
+
+        return Accepted(DocumentResponse.FromEntity(document));
     }
 
     [HttpDelete("{id:guid}")]

@@ -34,6 +34,7 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.ContentType).IsRequired().HasMaxLength(100);
             entity.Property(e => e.StoragePath).IsRequired().HasMaxLength(500);
             entity.Property(e => e.Status).HasConversion<string>().HasMaxLength(20);
+            entity.Property(e => e.ProcessingError).HasMaxLength(1000);
             entity.HasIndex(e => e.TenantId);
             entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
         });

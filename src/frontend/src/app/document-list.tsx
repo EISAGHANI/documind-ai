@@ -1,4 +1,6 @@
+import { AutoRefresh } from "./auto-refresh";
 import { DeleteButton } from "./delete-button";
+import { RetryButton } from "./retry-button";
 import { listDocuments } from "@/lib/api";
 import { formatBytes, type DocumentStatus, type DocumentSummary } from "@/lib/documents";
 
@@ -27,8 +29,11 @@ export async function DocumentList() {
     return <p className="py-8 text-center text-sm text-zinc-500">No documents yet. Upload your first PDF above.</p>;
   }
 
+  const processing = documents.some((d) => d.status === "Pending" || d.status === "Processing");
+
   return (
     <ul className="divide-y divide-zinc-200 dark:divide-zinc-800">
+      <AutoRefresh active={processing} />
       {documents.map((document) => (
         <li key={document.id} className="flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
@@ -42,11 +47,15 @@ export async function DocumentList() {
               {document.fileName} · {formatBytes(document.fileSizeBytes)} ·{" "}
               {dateFormat.format(new Date(document.uploadedAt))}
             </p>
+            {document.status === "Failed" && document.processingError ? (
+              <p className="mt-1 text-sm text-red-600 dark:text-red-400">{document.processingError}</p>
+            ) : null}
           </div>
           <div className="flex shrink-0 items-center gap-3">
             <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${statusStyles[document.status]}`}>
               {document.status}
             </span>
+            {document.status === "Failed" ? <RetryButton id={document.id} /> : null}
             <DeleteButton id={document.id} title={document.title} />
           </div>
         </li>

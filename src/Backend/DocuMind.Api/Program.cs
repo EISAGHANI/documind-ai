@@ -1,7 +1,10 @@
 using DocuMind.Api.Data;
+using DocuMind.Api.Embeddings;
+using DocuMind.Api.Processing;
 using DocuMind.Api.Storage;
 using DocuMind.Api.Tenancy;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -18,7 +21,27 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ITenantProvider, HeaderTenantProvider>();
 builder.Services.AddSingleton<IFileStorage, LocalFileStorage>();
 
-// 3. Allow the Next.js frontend to call the API
+// 3. Document processing: Voyage embeddings + background worker
+builder.Services.Configure<VoyageOptions>(builder.Configuration.GetSection(VoyageOptions.SectionName));
+builder.Services.AddHttpClient<IEmbeddingService, VoyageEmbeddingService>((services, client) =>
+    {
+        var options = services.GetRequiredService<IOptions<VoyageOptions>>().Value;
+        client.BaseAddress = new Uri(options.BaseUrl);
+    })
+    .AddStandardResilienceHandler(resilience =>
+    {
+        // Retries 429/5xx with exponential backoff and jitter, as Voyage recommends.
+        // Large embedding batches can take a while, so allow more than the 10s default per attempt.
+        resilience.Retry.MaxRetryAttempts = 5;
+        resilience.AttemptTimeout.Timeout = TimeSpan.FromSeconds(60);
+        resilience.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(120);
+        resilience.TotalRequestTimeout.Timeout = TimeSpan.FromMinutes(5);
+    });
+builder.Services.AddSingleton<IDocumentProcessingQueue, DocumentProcessingQueue>();
+builder.Services.AddScoped<DocumentProcessor>();
+builder.Services.AddHostedService<DocumentProcessingWorker>();
+
+// 4. Allow the Next.js frontend to call the API
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
 builder.Services.AddCors(options =>
     options.AddPolicy(FrontendCorsPolicy, policy =>
@@ -27,12 +50,12 @@ builder.Services.AddCors(options =>
 builder.Services.AddControllers();
 builder.Services.AddProblemDetails();
 
-// 4. Register native OpenAPI services (No Swashbuckle required!)
+// 5. Register native OpenAPI services (No Swashbuckle required!)
 builder.Services.AddOpenApi();
 
 var app = builder.Build();
 
-// 5. Enable OpenAPI endpoint and Scalar UI in Development
+// 6. Enable OpenAPI endpoint and Scalar UI in Development
 if (app.Environment.IsDevelopment())
 {
     // Generates the /openapi/v1.json document

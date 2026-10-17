@@ -9,7 +9,9 @@ public record DocumentResponse(
     long FileSizeBytes,
     string ContentType,
     DateTime UploadedAt,
-    string Status)
+    string Status,
+    DateTime? ProcessedAt,
+    string? ProcessingError)
 {
     public static DocumentResponse FromEntity(Document document) => new(
         document.Id,
@@ -18,5 +20,7 @@ public record DocumentResponse(
         document.FileSizeBytes,
         document.ContentType,
         document.UploadedAt,
-        document.Status.ToString());
+        document.Status.ToString(),
+        document.ProcessedAt,
+        document.ProcessingError);
 }

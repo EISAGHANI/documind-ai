@@ -2,7 +2,7 @@
 
 import { refresh } from "next/cache";
 
-import { ApiError, deleteDocument, uploadDocument } from "@/lib/api";
+import { ApiError, deleteDocument, reprocessDocument, uploadDocument } from "@/lib/api";
 import { MAX_FILE_SIZE_BYTES } from "@/lib/documents";
 
 export type UploadState = { status: "idle" | "success" | "error"; message?: string };
@@ -32,6 +32,20 @@ export async function uploadDocumentAction(_prev: UploadState, formData: FormDat
     return { status: "success", message: `Uploaded "${document.title}".` };
   } catch (error) {
     return { status: "error", message: errorMessage(error) };
+  }
+}
+
+export async function reprocessDocumentAction(id: string): Promise<{ error?: string }> {
+  if (!GUID_PATTERN.test(id)) {
+    return { error: "Invalid document id." };
+  }
+
+  try {
+    await reprocessDocument(id);
+    refresh();
+    return {};
+  } catch (error) {
+    return { error: errorMessage(error) };
   }
 }
 

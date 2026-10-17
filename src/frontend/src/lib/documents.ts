@@ -10,6 +10,8 @@ export type DocumentSummary = {
   contentType: string;
   uploadedAt: string;
   status: DocumentStatus;
+  processedAt: string | null;
+  processingError: string | null;
 };
 
 // Must match DocumentsController.MaxFileSizeBytes in the API

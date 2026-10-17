@@ -54,6 +54,11 @@ export async function uploadDocument(file: File, title: string): Promise<Documen
   return response.json();
 }
 
+export async function reprocessDocument(id: string): Promise<void> {
+  const response = await apiFetch(`/api/documents/${encodeURIComponent(id)}/reprocess`, { method: "POST" });
+  if (!response.ok) throw await toApiError(response);
+}
+
 export async function deleteDocument(id: string): Promise<void> {
   const response = await apiFetch(`/api/documents/${encodeURIComponent(id)}`, { method: "DELETE" });
   if (!response.ok && response.status !== 404) throw await toApiError(response);
