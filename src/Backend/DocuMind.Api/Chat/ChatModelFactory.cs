@@ -24,7 +24,8 @@ public class ChatModelFactory(ApiKeyStore keys, AiClientCache clients, IOptions<
         return provider switch
         {
             AiProvider.Anthropic => new ClaudeChatModel(clients.GetAnthropicClient(apiKey), model, claudeOptions.Value),
-            AiProvider.OpenAI or AiProvider.Gemini => new OpenAICompatibleChatModel(clients.GetChatClient(provider, apiKey, model)),
+            AiProvider.OpenAI or AiProvider.Gemini => new OpenAICompatibleChatModel(
+                clients.GetChatClient(provider, apiKey, model), ProviderNames.ToRouteValue(provider), model),
             _ => throw new MissingApiKeyException($"{ProviderNames.Display(provider)} can't be used for answering questions."),
         };
     }

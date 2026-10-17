@@ -1,4 +1,5 @@
 using DocuMind.Api.ApiKeys;
+using DocuMind.Api.Audits;
 using DocuMind.Api.Chat;
 using DocuMind.Api.Data;
 using DocuMind.Api.Embeddings;
@@ -95,6 +96,13 @@ builder.Services.Configure<ClaudeOptions>(builder.Configuration.GetSection(Claud
 builder.Services.AddScoped<ChatModelFactory>();
 builder.Services.AddScoped<RetrievalService>();
 builder.Services.AddScoped<ChatService>();
+
+// Compliance audits: checklists evaluated in the background with the tenant's chosen model
+builder.Services.Configure<AuditOptions>(builder.Configuration.GetSection(AuditOptions.SectionName));
+builder.Services.AddSingleton<AuditQueue>();
+builder.Services.AddSingleton<IAuditQueue>(services => services.GetRequiredService<AuditQueue>());
+builder.Services.AddScoped<AuditRunner>();
+builder.Services.AddHostedService<AuditWorker>();
 
 // 7. Allow the Next.js frontend to call the API
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];

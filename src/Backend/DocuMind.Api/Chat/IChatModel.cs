@@ -1,14 +1,33 @@
 namespace DocuMind.Api.Chat;
 
-// A chat provider that answers a question from retrieved chunks and streams the answer
+// A tenant's chosen AI provider and model: streams cited answers and produces structured JSON
 public interface IChatModel
 {
+    string Provider { get; }
+    string Model { get; }
+
     IAsyncEnumerable<ChatStreamEvent> StreamAnswerAsync(
         IReadOnlyList<ChatTurn> history,
         string question,
         IReadOnlyList<RetrievedChunk> chunks,
         CancellationToken cancellationToken);
+
+    // Returns JSON that conforms to the given JSON Schema (the provider enforces it)
+    Task<string> GenerateJsonAsync(StructuredRequest request, CancellationToken cancellationToken);
 }
+
+// Schema objects must set additionalProperties: false and list every property as required,
+// which both Claude and OpenAI-style strict schemas accept.
+public record StructuredRequest(
+    string Instructions,
+    string Input,
+    string SchemaName,
+    IReadOnlyDictionary<string, System.Text.Json.JsonElement> Schema,
+    int MaxTokens,
+    string Effort);
+
+// Thrown when the model's output can't be used (refusal, cut off, invalid JSON); shown to users
+public class ModelOutputException(string message) : InvalidOperationException(message);
 
 public static class ChatPrompts
 {

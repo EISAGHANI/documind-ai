@@ -24,6 +24,10 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, IdentityR
     public DbSet<Tenant> Tenants => Set<Tenant>();
     public DbSet<TenantMembership> TenantMemberships => Set<TenantMembership>();
     public DbSet<TenantInvitation> TenantInvitations => Set<TenantInvitation>();
+    public DbSet<AuditChecklist> AuditChecklists => Set<AuditChecklist>();
+    public DbSet<AuditCheck> AuditChecks => Set<AuditCheck>();
+    public DbSet<AuditRun> AuditRuns => Set<AuditRun>();
+    public DbSet<AuditFinding> AuditFindings => Set<AuditFinding>();
 
     // Read on every query, so each request only sees rows for its own tenant
     private Guid CurrentTenantId => _tenantProvider.TenantId;
@@ -118,6 +122,59 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, IdentityR
             entity.HasIndex(e => new { e.TenantId, e.Email });
             entity.HasOne(e => e.Tenant).WithMany().HasForeignKey(e => e.TenantId).OnDelete(DeleteBehavior.Cascade);
             entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        });
+
+        modelBuilder.Entity<AuditChecklist>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Name).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.Description).HasMaxLength(500);
+            entity.HasIndex(e => e.TenantId);
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        });
+
+        modelBuilder.Entity<AuditCheck>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Title).IsRequired().HasMaxLength(200);
+            entity.Property(e => e.Requirement).IsRequired().HasMaxLength(1000);
+            entity.Property(e => e.Severity).HasConversion<string>().HasMaxLength(10);
+            entity.HasOne(e => e.Checklist).WithMany(c => c.Checks).HasForeignKey(e => e.ChecklistId).OnDelete(DeleteBehavior.Cascade);
+            // Scoped through the parent checklist's tenant
+            entity.HasQueryFilter(e => e.Checklist.TenantId == CurrentTenantId);
+        });
+
+        modelBuilder.Entity<AuditRun>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.ChecklistName).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.Status).HasConversion<string>().HasMaxLength(20);
+            entity.Property(e => e.Error).HasMaxLength(1000);
+            entity.Property(e => e.Provider).HasMaxLength(20);
+            entity.Property(e => e.Model).HasMaxLength(200);
+            entity.OwnsMany(e => e.Checks, checks =>
+            {
+                checks.ToJson();
+                checks.Property(c => c.Severity).HasConversion<string>();
+            });
+            entity.HasOne(e => e.Document).WithMany().HasForeignKey(e => e.DocumentId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<AuditChecklist>().WithMany().HasForeignKey(e => e.ChecklistId).OnDelete(DeleteBehavior.SetNull);
+            entity.HasIndex(e => new { e.TenantId, e.CreatedAt });
+            entity.HasIndex(e => e.DocumentId);
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        });
+
+        modelBuilder.Entity<AuditFinding>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.CheckTitle).IsRequired().HasMaxLength(200);
+            entity.Property(e => e.Requirement).IsRequired().HasMaxLength(1000);
+            entity.Property(e => e.Severity).HasConversion<string>().HasMaxLength(10);
+            entity.Property(e => e.Result).HasConversion<string>().HasMaxLength(20);
+            entity.Property(e => e.Explanation).IsRequired().HasMaxLength(4000);
+            entity.OwnsMany(e => e.Evidence, evidence => evidence.ToJson());
+            entity.HasOne(e => e.Run).WithMany(r => r.Findings).HasForeignKey(e => e.RunId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasQueryFilter(e => e.Run.TenantId == CurrentTenantId);
         });
     }
 }

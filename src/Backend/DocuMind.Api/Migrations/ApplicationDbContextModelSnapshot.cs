@@ -97,6 +97,178 @@ namespace DocuMind.Api.Migrations
                     b.ToTable("AspNetUsers", (string)null);
                 });
 
+            modelBuilder.Entity("DocuMind.Api.Entities.AuditCheck", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ChecklistId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Requirement")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("Severity")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ChecklistId");
+
+                    b.ToTable("AuditChecks");
+                });
+
+            modelBuilder.Entity("DocuMind.Api.Entities.AuditChecklist", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId");
+
+                    b.ToTable("AuditChecklists");
+                });
+
+            modelBuilder.Entity("DocuMind.Api.Entities.AuditFinding", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CheckTitle")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Explanation")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Requirement")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("Result")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<Guid>("RunId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Severity")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RunId");
+
+                    b.ToTable("AuditFindings");
+                });
+
+            modelBuilder.Entity("DocuMind.Api.Entities.AuditRun", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ChecklistId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ChecklistName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CreatedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("DocumentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Error")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("Model")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Provider")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTime?>("StartedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("UsedRetrieval")
+                        .HasColumnType("boolean");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ChecklistId");
+
+                    b.HasIndex("DocumentId");
+
+                    b.HasIndex("TenantId", "CreatedAt");
+
+                    b.ToTable("AuditRuns");
+                });
+
             modelBuilder.Entity("DocuMind.Api.Entities.Document", b =>
                 {
                     b.Property<Guid>("Id")
@@ -463,6 +635,105 @@ namespace DocuMind.Api.Migrations
                     b.ToTable("AspNetUserTokens", (string)null);
                 });
 
+            modelBuilder.Entity("DocuMind.Api.Entities.AuditCheck", b =>
+                {
+                    b.HasOne("DocuMind.Api.Entities.AuditChecklist", "Checklist")
+                        .WithMany("Checks")
+                        .HasForeignKey("ChecklistId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Checklist");
+                });
+
+            modelBuilder.Entity("DocuMind.Api.Entities.AuditFinding", b =>
+                {
+                    b.HasOne("DocuMind.Api.Entities.AuditRun", "Run")
+                        .WithMany("Findings")
+                        .HasForeignKey("RunId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.OwnsMany("DocuMind.Api.Entities.AuditEvidence", "Evidence", b1 =>
+                        {
+                            b1.Property<Guid>("AuditFindingId");
+
+                            b1.Property<int>("__synthesizedOrdinal")
+                                .ValueGeneratedOnAdd();
+
+                            b1.Property<int?>("PageNumber");
+
+                            b1.Property<string>("Quote")
+                                .IsRequired();
+
+                            b1.Property<bool>("Verified");
+
+                            b1.HasKey("AuditFindingId", "__synthesizedOrdinal");
+
+                            b1.ToTable("AuditFindings");
+
+                            b1
+                                .ToJson("Evidence")
+                                .HasColumnType("jsonb");
+
+                            b1.WithOwner()
+                                .HasForeignKey("AuditFindingId");
+                        });
+
+                    b.Navigation("Evidence");
+
+                    b.Navigation("Run");
+                });
+
+            modelBuilder.Entity("DocuMind.Api.Entities.AuditRun", b =>
+                {
+                    b.HasOne("DocuMind.Api.Entities.AuditChecklist", null)
+                        .WithMany()
+                        .HasForeignKey("ChecklistId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("DocuMind.Api.Entities.Document", "Document")
+                        .WithMany()
+                        .HasForeignKey("DocumentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.OwnsMany("DocuMind.Api.Entities.AuditRunCheck", "Checks", b1 =>
+                        {
+                            b1.Property<Guid>("AuditRunId");
+
+                            b1.Property<int>("__synthesizedOrdinal")
+                                .ValueGeneratedOnAdd();
+
+                            b1.Property<string>("Key")
+                                .IsRequired();
+
+                            b1.Property<string>("Requirement")
+                                .IsRequired();
+
+                            b1.Property<string>("Severity")
+                                .IsRequired();
+
+                            b1.Property<string>("Title")
+                                .IsRequired();
+
+                            b1.HasKey("AuditRunId", "__synthesizedOrdinal");
+
+                            b1.ToTable("AuditRuns");
+
+                            b1
+                                .ToJson("Checks")
+                                .HasColumnType("jsonb");
+
+                            b1.WithOwner()
+                                .HasForeignKey("AuditRunId");
+                        });
+
+                    b.Navigation("Checks");
+
+                    b.Navigation("Document");
+                });
+
             modelBuilder.Entity("DocuMind.Api.Entities.DocumentChunk", b =>
                 {
                     b.HasOne("DocuMind.Api.Entities.Document", "Document")
@@ -553,6 +824,16 @@ namespace DocuMind.Api.Migrations
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("DocuMind.Api.Entities.AuditChecklist", b =>
+                {
+                    b.Navigation("Checks");
+                });
+
+            modelBuilder.Entity("DocuMind.Api.Entities.AuditRun", b =>
+                {
+                    b.Navigation("Findings");
                 });
 
             modelBuilder.Entity("DocuMind.Api.Entities.Document", b =>

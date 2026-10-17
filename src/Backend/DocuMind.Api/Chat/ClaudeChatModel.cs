@@ -8,6 +8,40 @@ namespace DocuMind.Api.Chat;
 // response carries citations that point at the exact chunk it used.
 public class ClaudeChatModel(AnthropicClient client, string model, ClaudeOptions options) : IChatModel
 {
+    public string Provider => "anthropic";
+    public string Model => model;
+
+    // Structured outputs: the response is constrained to the JSON schema
+    public async Task<string> GenerateJsonAsync(StructuredRequest request, CancellationToken cancellationToken)
+    {
+        var response = await client.Beta.Messages.Create(new MessageCreateParams
+        {
+            Model = model,
+            MaxTokens = request.MaxTokens,
+            System = request.Instructions,
+            OutputConfig = new BetaOutputConfig
+            {
+                Effort = request.Effort,
+                Format = new BetaJsonOutputFormat { Schema = request.Schema.ToDictionary(p => p.Key, p => p.Value) },
+            },
+            Betas = ["server-side-fallback-2026-07-01"],
+            Fallbacks = new Default(),
+            Messages = [new BetaMessageParam { Role = Role.User, Content = request.Input }],
+        }, cancellationToken);
+
+        var stopReason = response.StopReason?.Raw();
+        if (stopReason == "refusal")
+        {
+            throw new ModelOutputException("Claude declined to review this document.");
+        }
+        if (stopReason == "max_tokens")
+        {
+            throw new ModelOutputException("The review was cut off because it was too long. Try a checklist with fewer checks.");
+        }
+
+        return string.Concat(response.Content.Select(b => b.TryPickText(out var text) ? text.Text : ""));
+    }
+
     public async IAsyncEnumerable<ChatStreamEvent> StreamAnswerAsync(
         IReadOnlyList<ChatTurn> history,
         string question,
