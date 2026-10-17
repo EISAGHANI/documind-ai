@@ -149,3 +149,5 @@ obj/
 # VS Code
 .vscode/
 *.code-workspace
+# Locally stored uploads
+src/Backend/DocuMind.Api/uploads/
