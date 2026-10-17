@@ -166,6 +166,10 @@ public partial class AuditRunner(
                     .ToList(),
             };
         }).ToList();
+
+        // The findings already have Ids, so they must be added explicitly or EF treats them as
+        // existing rows on the tracked run
+        db.AuditFindings.AddRange(run.Findings);
     }
 
     // Small documents are reviewed in full. Large ones get the passages closest to each check,

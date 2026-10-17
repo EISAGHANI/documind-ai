@@ -108,6 +108,9 @@ public class AuditsController(
 
         db.AuditChecks.RemoveRange(checklist.Checks);
         Apply(checklist, request);
+        // The new checks already have Ids, so EF would treat them as existing rows (and UPDATE
+        // nothing) unless they are added explicitly
+        db.AuditChecks.AddRange(checklist.Checks);
         await db.SaveChangesAsync(cancellationToken);
         return ToResponse(checklist);
     }
