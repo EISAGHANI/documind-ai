@@ -1,7 +1,10 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { Suspense } from "react";
+
 import { SiteHeader } from "./site-header";
+import { UserMenu } from "./user-menu";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -29,7 +32,14 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-zinc-50 dark:bg-zinc-950">
-        <SiteHeader />
+        {/* The user menu waits on the session; Suspense lets the rest of the page stream first */}
+        <SiteHeader
+          userMenu={
+            <Suspense fallback={null}>
+              <UserMenu />
+            </Suspense>
+          }
+        />
         {children}
       </body>
     </html>

@@ -13,10 +13,11 @@ import { PROVIDER_KEY_URLS, type AiProviderStatus } from "@/lib/settings";
 
 type Message = { kind: "success" | "error"; text: string } | null;
 
-export function ProviderCard({ status, active }: { status: AiProviderStatus; active: boolean }) {
+// canEdit is false for Members: they see which keys are set up but can't change them
+export function ProviderCard({ status, active, canEdit }: { status: AiProviderStatus; active: boolean; canEdit: boolean }) {
   const isChat = status.purpose === "chat";
   const [apiKey, setApiKey] = useState("");
-  const [editing, setEditing] = useState(!status.configured);
+  const [editing, setEditing] = useState(canEdit && !status.configured);
   const [models, setModels] = useState<string[] | null>(null);
   const [message, setMessage] = useState<Message>(null);
   const [pending, startTransition] = useTransition();
@@ -107,7 +108,7 @@ export function ProviderCard({ status, active }: { status: AiProviderStatus; act
           </p>
         </div>
 
-        {status.configured ? (
+        {canEdit && status.configured ? (
           <div className="flex gap-2">
             {isChat && !active ? (
               <button type="button" onClick={makeActive} disabled={pending || !status.model} title={status.model ? undefined : "Choose a model first"} className={secondaryButton}>
@@ -163,9 +164,9 @@ export function ProviderCard({ status, active }: { status: AiProviderStatus; act
           <select
             id={`${status.provider}-model`}
             value={status.model ?? ""}
-            onFocus={() => models === null && !pending && loadModels()}
+            onFocus={() => canEdit && models === null && !pending && loadModels()}
             onChange={(event) => event.target.value && chooseModel(event.target.value)}
-            disabled={pending}
+            disabled={pending || !canEdit}
             className="min-w-64 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
           >
             {!status.model ? <option value="">Choose a model…</option> : null}
@@ -175,7 +176,7 @@ export function ProviderCard({ status, active }: { status: AiProviderStatus; act
               </option>
             ))}
           </select>
-          {models === null ? (
+          {canEdit && models === null ? (
             <button type="button" onClick={loadModels} disabled={pending} className="text-indigo-600 hover:underline disabled:opacity-50 dark:text-indigo-400">
               {pending ? "Loading…" : "Show all models"}
             </button>

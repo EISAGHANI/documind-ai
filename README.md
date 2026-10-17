@@ -2,7 +2,7 @@
 
 DocuMind AI is a multi-tenant B2B SaaS platform for working with large collections of business documents. Companies upload PDFs such as contracts, compliance records and technical manuals. DocuMind extracts their text, indexes it for semantic (vector) search, and lets people ask questions in plain language. Answers come from Claude and cite the exact document and page they're based on.
 
-> **Status:** early development. Uploading, processing, vector search, question answering with citations, and bring-your-own-key settings work end to end. Sign-in, compliance audits and production deployment are not built yet (see the [Roadmap](#roadmap)).
+> **Status:** early development. Uploading, processing, vector search, question answering with citations, bring-your-own-key settings, and sign-in with companies, roles and invitations work end to end. Compliance audits and production deployment are not built yet (see the [Roadmap](#roadmap)).
 
 ---
 
@@ -15,6 +15,7 @@ DocuMind AI is a multi-tenant B2B SaaS platform for working with large collectio
   - [Document ingestion pipeline](#document-ingestion-pipeline)
   - [Question answering (RAG)](#question-answering-rag)
   - [Bring your own key (AI providers)](#bring-your-own-key-ai-providers)
+  - [Sign-in, companies and roles](#sign-in-companies-and-roles)
   - [Multi-tenancy](#multi-tenancy)
   - [Data model](#data-model)
   - [Key design decisions](#key-design-decisions)
@@ -38,7 +39,8 @@ DocuMind AI is a multi-tenant B2B SaaS platform for working with large collectio
 | **Ask your documents** | Ask a question in plain language. The most relevant chunks are found by vector similarity and sent to the chosen AI model (Claude, OpenAI or Gemini), which answers only from them. |
 | **Bring your own key** | Each company pastes its own API keys on the **Settings** page. Keys are verified with the provider, encrypted before storage, and never shown again. Usage is billed to the company's own accounts. |
 | **Citations** | Every claim in an answer is marked with a citation like **[1]**. Clicking it opens the source PDF at the cited page. |
-| **Tenant isolation** | Every document, chunk and search is scoped to one tenant (company), and the database layer enforces this automatically. |
+| **Sign-in and teams** | People sign in with email and password. Signing up creates a company with you as its **Admin**; Admins invite colleagues by link as Admin or Member and manage roles on the **Team** page. |
+| **Tenant isolation** | Every document, chunk, key and search is scoped to the signed-in user's company, and the database layer enforces this automatically. |
 
 ---
 
@@ -104,7 +106,7 @@ flowchart LR
     Claude["Claude API<br/>answers + citations"]
 
     Browser --> Pages & Actions & Routes
-    Pages & Actions & Routes -- "HTTP + X-Tenant-Id" --> DocsCtl & ChatCtl
+    Pages & Actions & Routes -- "HTTP + Bearer token" --> DocsCtl & ChatCtl
     DocsCtl --> Disk & DB
     DocsCtl -- enqueue --> Queue --> Worker
     Worker --> Disk & DB & Voyage
@@ -113,7 +115,7 @@ flowchart LR
 
 The system has three parts:
 
-1. **Next.js (backend-for-frontend).** The browser only talks to the Next.js server. Next.js renders the document list on the server, handles uploads and deletes through **Server Actions**, and forwards the chat and download streams through **route handlers**. The .NET API's address and the tenant header stay on the server, which is also where user access tokens will go once sign-in exists.
+1. **Next.js (backend-for-frontend).** The browser only talks to the Next.js server. Next.js renders the document list on the server, handles uploads and deletes through **Server Actions**, and forwards the chat and download streams through **route handlers**. The .NET API's address and the user's access token stay on the server: the token lives in an encrypted, HttpOnly session cookie and is added to each API call by the Next.js server.
 2. **The .NET API.** Holds all business logic: validation, storage, the processing pipeline, retrieval and the Claude integration. It is the only component that touches the database, the files and the AI services.
 3. **PostgreSQL with pgvector.** One database holds both the relational data (documents, status) and the vectors (chunk embeddings). No separate vector database is needed.
 
@@ -179,7 +181,7 @@ sequenceDiagram
 
     User->>UI: "What are the payment terms?"
     UI->>Next: POST conversation
-    Next->>API: Forward + X-Tenant-Id
+    Next->>API: Forward + access token
     API->>V: Embed question (input_type=query)
     API->>DB: Top 8 chunks by cosine distance (tenant-scoped)
     API-->>UI: event: sources
@@ -242,20 +244,100 @@ flowchart LR
 
 > **Production note:** set `DataProtection:KeysPath` (or use a key vault) so the encryption keys survive restarts and are shared between API instances. If the key ring is lost, saved API keys can no longer be decrypted and must be entered again.
 
+### Sign-in, companies and roles
+
+Accounts use [ASP.NET Core Identity](https://learn.microsoft.com/aspnet/core/security/authentication/identity) in the .NET API, with email and password. Each person belongs to one **company** (tenant) with a **role**:
+
+| Role | Can |
+|---|---|
+| **Admin** | Everything a Member can, plus add or change AI keys (Settings), invite people, change roles and remove members |
+| **Member** | Upload and delete documents, ask questions, see the team and which keys are set up |
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant Next as Next.js (Server Action)
+    participant Proxy as proxy.ts
+    participant API as .NET API (Identity)
+
+    User->>Next: Sign up / sign in / accept invitation
+    Next->>API: POST /api/auth/register · login · invitations/accept
+    API-->>Next: accessToken (30 min) + refreshToken (14 days)
+    Next-->>User: Encrypted HttpOnly cookie (AES-GCM, SESSION_SECRET)
+
+    User->>Proxy: Any later request (page, action, chat)
+    alt access token expires within 2 minutes
+        Proxy->>API: POST /api/auth/refresh
+        API-->>Proxy: New tokens with current company and role
+        Proxy-->>User: Updated cookie
+    else no valid session
+        Proxy-->>User: Redirect to /login (or 401 for /api/*)
+    end
+    Proxy->>Next: Request continues
+    Next->>API: Call with Authorization: Bearer token
+```
+
+- **Tokens:** Identity's bearer tokens, protected with ASP.NET Core Data Protection.
+  - When a token is issued, [`TenantClaimsPrincipalFactory`](src/Backend/DocuMind.Api/Tenancy/TenantClaimsPrincipalFactory.cs) adds the user's company id and role as claims.
+  - [`ClaimsTenantProvider`](src/Backend/DocuMind.Api/Tenancy/ClaimsTenantProvider.cs) reads the company id back on each request.
+- **Signed in by default:** a fallback authorization policy requires a signed-in user with a company on every endpoint. Only sign-up, sign-in, refresh and invitation lookup are anonymous. Admin-only endpoints use the `TenantAdmin` policy.
+- **Revocation:** an access token would normally stay valid until it expires. [`MembershipValidationMiddleware`](src/Backend/DocuMind.Api/Tenancy/MembershipValidationMiddleware.cs) checks the token's company and role against the database on every request (cached for a minute, and cleared when an admin changes someone). A removed member is locked out at once, and a role change applies immediately.
+- **Session cookie:** the browser never sees the tokens. [`session.ts`](src/frontend/src/lib/session.ts) keeps them in an AES-GCM-encrypted, `HttpOnly`, `SameSite=Lax` cookie.
+  - [`proxy.ts`](src/frontend/src/proxy.ts) (Next.js 16's replacement for middleware) refreshes the tokens before they expire and redirects signed-out visitors.
+  - Pages also check the user through a small data access layer ([`auth.ts`](src/frontend/src/lib/auth.ts)), so security never depends on the proxy alone.
+- **Invitations:** an Admin enters an email and role and gets a one-time link (`/invite/{token}`) to send. The link expires after 7 days, and only a SHA-256 hash of the token is stored. Opening it shows the company name, and the person sets their name and password to join.
+- **Passwords:** at least 10 characters, with no composition rules (following [NIST SP 800-63B](https://pages.nist.gov/800-63-4/sp800-63b.html)). After 5 wrong attempts the account is locked for 5 minutes.
+- **Safeguards:**
+  - A company always keeps at least one Admin.
+  - Admins can't remove themselves.
+  - The `?next=` redirect after sign-in only accepts paths on this site.
+
 ### Multi-tenancy
 
-Each company is a **tenant**, identified by a `TenantId` (GUID) on every `Document` and `DocumentChunk`.
+Each company is a **tenant**, identified by a `TenantId` (GUID) on every `Document`, `DocumentChunk`, API key, membership and invitation.
 
 - **Query filter:** [`ApplicationDbContext`](src/Backend/DocuMind.Api/Data/ApplicationDbContext.cs) applies an EF Core **global query filter** (`TenantId == current tenant`) to both tables. Every query is scoped automatically, so forgetting a `Where` clause cannot leak another tenant's data.
 - **Background work:** the processing worker runs outside any request. It deliberately bypasses the filter (`IgnoreQueryFilters`) and copies the document's `TenantId` onto each chunk itself.
 - **Files:** stored under `uploads/{tenantId}/`, and the storage layer refuses any path outside its root (path traversal protection).
-- **Current tenant (temporary):** for now the tenant comes from an `X-Tenant-Id` header that the Next.js server adds, with a fixed development tenant as fallback ([`HeaderTenantProvider`](src/Backend/DocuMind.Api/Tenancy/HeaderTenantProvider.cs)). Once sign-in is added, it will come from the signed-in user's token instead. Nothing else needs to change, because everything depends on the `ITenantProvider` interface.
+- **Current tenant:** comes from the company claim in the signed-in user's token, through `ITenantProvider`. A request without a valid claim gets an empty tenant id that matches no rows, so a mistake returns nothing rather than another company's data.
 
 ### Data model
 
 ```mermaid
 erDiagram
+    Tenant ||--o{ TenantMembership : "has members"
+    ApplicationUser ||--|| TenantMembership : "belongs to"
+    Tenant ||--o{ TenantInvitation : "invites"
+    Tenant ||--o{ Document : owns
     Document ||--o{ DocumentChunk : "split into"
+    Tenant {
+        uuid Id PK
+        string Name
+        timestamp CreatedAt
+    }
+    ApplicationUser {
+        uuid Id PK
+        string Email "also the user name"
+        string DisplayName
+        string PasswordHash "Identity (PBKDF2)"
+        string SecurityStamp "invalidates refresh tokens when changed"
+    }
+    TenantMembership {
+        uuid TenantId PK
+        uuid UserId PK "unique: one company per user"
+        string Role "Admin | Member"
+        timestamp JoinedAt
+    }
+    TenantInvitation {
+        uuid Id PK
+        uuid TenantId FK
+        string Email
+        string Role
+        string TokenHash "SHA-256 of the link token"
+        timestamp ExpiresAt "7 days"
+        timestamp AcceptedAt "nullable"
+    }
     Document {
         uuid Id PK
         uuid TenantId "indexed"
@@ -299,7 +381,10 @@ Schema changes are managed with EF Core migrations in [`Migrations/`](src/Backen
 
 | Decision | Why |
 |---|---|
-| **Next.js server calls the API, not the browser** | Keeps the API address, tenant header and (later) access tokens off the client. No CORS is needed in production. |
+| **Next.js server calls the API, not the browser** | Keeps the API address and access tokens off the client. No CORS is needed in production. |
+| **Built-in Identity instead of an external auth provider** | No third-party account or cost, and users stay in our own database. Google or Microsoft sign-in can be added on top later. |
+| **Tokens in an encrypted HttpOnly cookie, refreshed in `proxy.ts`** | Page scripts can't steal tokens. Refreshing in the proxy is necessary because cookies can't be written while a page renders. |
+| **Membership checked on every request** | Bearer tokens can't be revoked, so the API checks the current membership (cached for a minute) to lock out removed people at once. |
 | **pgvector instead of a separate vector database** | One database to run, back up and secure. Vectors and their documents stay consistent through transactions. |
 | **Chunks never cross page boundaries** | Every citation can point to an exact page. |
 | **Claude search-result blocks with citations** | Citations are produced by the API itself and tied to the exact chunk, so they don't depend on the model formatting references correctly. |
@@ -325,33 +410,42 @@ documind-ai/
     │       ├── Controllers/
     │       │   ├── DocumentsController.cs  # Upload, list, download, reprocess, delete
     │       │   ├── ChatController.cs       # POST /api/chat → server-sent events
-    │       │   └── AiSettingsController.cs # Bring-your-own-key settings
+    │       │   ├── AiSettingsController.cs # Bring-your-own-key settings
+    │       │   ├── AuthController.cs       # Sign-up, sign-in, refresh, invitations, /me
+    │       │   └── TeamController.cs       # Members, roles and invitations (Admin)
     │       ├── ApiKeys/                  # Encrypted key store, key checks, SDK client cache
     │       ├── Chat/                     # Retrieval (pgvector), IChatModel: Claude + OpenAI/Gemini
     │       ├── Processing/               # PDF extraction, chunking, queue, background worker
     │       ├── Embeddings/               # Voyage AI client (IEmbeddingService)
     │       ├── Storage/                  # IFileStorage + local disk implementation
-    │       ├── Tenancy/                  # ITenantProvider (header-based for now)
-    │       ├── Data/                     # ApplicationDbContext, query filters, indexes
-    │       ├── Entities/                 # Document, DocumentChunk, TenantApiKey, TenantSettings
+    │       ├── Tenancy/                  # Tenant claims, claims factory, membership check, invitation tokens
+    │       ├── Data/                     # ApplicationDbContext (Identity + app tables), query filters
+    │       ├── Entities/                 # Users, tenants, memberships, invitations, documents, chunks, keys
     │       ├── Contracts/                # API response shapes
     │       ├── Migrations/               # EF Core migrations
     │       └── DocuMind.Api.http         # Ready-made requests for VS Code / Rider
     └── frontend/
         ├── next.config.ts                # Server Action body limit (51 MB)
-        ├── .env.example                  # API URL + development tenant id
+        ├── .env.example                  # API URL + session secret
         └── src/
+            ├── proxy.ts                  # Session refresh + sign-in redirects (Next.js 16 "proxy")
             ├── lib/
-            │   ├── api.ts                # Server-only client for the .NET API
+            │   ├── api.ts                # Server-only client for the .NET API (adds the bearer token)
+            │   ├── session.ts            # Encrypted session cookie, token refresh
+            │   ├── auth.ts               # Data access layer: getCurrentUser, requireUser, requireAdmin
+            │   ├── auth-types.ts         # User, team and invitation types
             │   ├── documents.ts          # Shared types and limits
             │   ├── settings.ts           # AI provider settings types
             │   └── chat.ts               # Chat types + SSE stream parser
             └── app/
-                ├── layout.tsx, site-header.tsx, setup-banner.tsx
+                ├── layout.tsx, site-header.tsx, user-menu.tsx, setup-banner.tsx
+                ├── login/, signup/, invite/[token]/   # Public auth pages
+                ├── auth-actions.ts, auth-form.tsx    # Sign-in/up/out Server Actions and shared form
                 ├── page.tsx              # Documents: upload form + list
                 ├── actions.ts            # Server Actions: upload, delete, reprocess
                 ├── chat/                 # "Ask" page and chat UI
-                ├── settings/             # Paste, verify, replace and remove API keys; pick models
+                ├── team/                 # Members, roles, invitation links
+                ├── settings/             # Paste, verify, replace and remove API keys; pick models (Admin)
                 ├── api/chat/route.ts     # Streams chat events from the API
                 └── documents/[id]/file/route.ts  # PDF download/inline view
 ```
@@ -391,19 +485,22 @@ dotnet run                         # http://localhost:5288 (API reference: /scal
 
 ```bash
 cd src/frontend
-cp .env.example .env.local
+cp .env.example .env.local         # then set SESSION_SECRET: openssl rand -base64 32
 npm install
 npm run dev                        # http://localhost:3000
 ```
 
-### 4. Add your API keys
+### 4. Create your company account
 
-1. Open <http://localhost:3000/settings>.
-2. Paste your **Voyage AI** key and click **Save & verify**.
+Open <http://localhost:3000>. You'll be sent to sign in, so choose **Create a company account**. You become the company's Admin and land on Settings.
+
+### 5. Add your API keys
+
+1. On **Settings**, paste your **Voyage AI** key and click **Save & verify**.
 3. Paste a **Claude**, **OpenAI** or **Gemini** key and pick a model. Claude defaults to `claude-opus-5-5`; for OpenAI and Gemini you choose from the models your key can use.
 4. The first chat provider you set up answers questions. Use **Use for answers** to switch.
 
-Then upload a PDF on **Documents**, wait for it to show **Processed**, and ask a question on the **Ask** page.
+Then upload a PDF on **Documents**, wait for it to show **Processed**, and ask a question on the **Ask** page. To add colleagues, open **Team**, create an invitation, and send them the link.
 
 ---
 
@@ -422,11 +519,10 @@ Then upload a PDF on **Documents**, wait for it to show **Processed**, and ask a
 | `Anthropic:RetrievalLimit` | `8` | Chunks retrieved per question (all providers) |
 | `AiProviders:OpenAIBaseUrl` | `https://api.openai.com/v1/` | OpenAI endpoint (override for a proxy or gateway) |
 | `AiProviders:GeminiBaseUrl` | `https://generativelanguage.googleapis.com/v1beta/openai/` | Gemini's OpenAI-compatible endpoint |
-| `DataProtection:KeysPath` | *(empty)* | Folder for the keys that encrypt tenants' API keys. **Set this in production**. Empty uses the OS default store (fine for local development) |
-
-AI provider API keys are **not** configuration: each tenant pastes its own on the Settings page.
+| `DataProtection:KeysPath` | *(empty)* | Folder for the keys that encrypt tenants' API keys **and sign-in tokens**. **Set this in production**. Empty uses the OS default store (fine for local development) |
 | `Cors:AllowedOrigins` | `http://localhost:3000` (dev) | Origins allowed to call the API directly |
-| `Tenancy:DevelopmentTenantId` | `…0001` (dev) | Tenant used when no `X-Tenant-Id` header is sent |
+
+AI provider API keys are **not** configuration: each tenant pastes its own on the Settings page. Token lifetimes (30-minute access, 14-day refresh), password rules and lockout are set in `Program.cs`.
 
 Environment variables use `__` in place of `:`, for example `Anthropic__Model=claude-sonnet-5-5`.
 
@@ -437,7 +533,7 @@ Environment variables use `__` in place of `:`, for example `Anthropic__Model=cl
 | Variable | Description |
 |---|---|
 | `DOCUMIND_API_URL` | Base URL of the .NET API (server-side only) |
-| `DOCUMIND_TENANT_ID` | Tenant sent as `X-Tenant-Id` until sign-in exists |
+| `SESSION_SECRET` | Random value of at least 32 characters that encrypts the session cookie (`openssl rand -base64 32`). Changing it signs everyone out |
 
 ### Database (`.env` next to `docker-compose.yml`)
 
@@ -447,10 +543,22 @@ Environment variables use `__` in place of `:`, for example `Anthropic__Model=cl
 
 ## API reference
 
-All endpoints are scoped to the current tenant. The interactive reference is at `http://localhost:5288/scalar/v1` while running in development.
+Every endpoint needs an `Authorization: Bearer <accessToken>` header and is scoped to the signed-in user's company. The exceptions are the anonymous auth endpoints marked *public*. **Admin** marks endpoints that need the Admin role (others return `403`). The interactive reference is at `http://localhost:5288/scalar/v1` while running in development.
 
 | Method | Path | Description |
 |---|---|---|
+| `POST` | `/api/auth/register` | *Public.* Create a company and its Admin (`companyName`, `displayName`, `email`, `password`). Returns `{ accessToken, refreshToken, expiresIn }` |
+| `POST` | `/api/auth/login` | *Public.* Sign in (`email`, `password`). Returns tokens. `401` for wrong credentials, `429` when locked out |
+| `POST` | `/api/auth/refresh` | *Public.* Exchange a refresh token for new tokens with the current company and role |
+| `GET` | `/api/auth/invitations/{token}` | *Public.* Preview an invitation (company, email, role) |
+| `POST` | `/api/auth/invitations/accept` | *Public.* Accept an invitation (`token`, `displayName`, `password`). Returns tokens |
+| `GET` | `/api/auth/me` | The signed-in user, their company and role |
+| `GET` | `/api/team/members` | Members of the company |
+| `GET` | `/api/team/invitations` | **Admin.** Pending invitations |
+| `POST` | `/api/team/invitations` | **Admin.** Invite (`email`, `role`). Returns the one-time `token` for the link |
+| `DELETE` | `/api/team/invitations/{id}` | **Admin.** Revoke an invitation |
+| `PUT` | `/api/team/members/{userId}/role` | **Admin.** Change a role (`{ "role": "Admin" }`). The last Admin can't be demoted |
+| `DELETE` | `/api/team/members/{userId}` | **Admin.** Remove a member (deletes their account) |
 | `GET` | `/api/documents` | List documents, newest first |
 | `GET` | `/api/documents/{id}` | Get one document's details and status |
 | `GET` | `/api/documents/{id}/file` | Download the original PDF |
@@ -459,11 +567,11 @@ All endpoints are scoped to the current tenant. The interactive reference is at 
 | `DELETE` | `/api/documents/{id}` | Delete the document, its chunks and its file |
 | `POST` | `/api/chat` | Ask a question. Body: `{ "messages": [{ "role": "user", "content": "…" }], "documentIds"?: [...] }`. Response: a `text/event-stream` |
 | `GET` | `/api/settings/ai` | Providers, which are configured (with key hints), chosen models, and the provider that answers |
-| `PUT` | `/api/settings/ai/keys/{provider}` | Verify and save a key (`{ "apiKey": "…" }`). Returns the models the key can use. `provider` is `anthropic`, `openai`, `gemini` or `voyage` |
-| `GET` | `/api/settings/ai/keys/{provider}/models` | List the chat models the saved key can use |
-| `PUT` | `/api/settings/ai/keys/{provider}/model` | Choose a chat model (`{ "model": "…" }`); it must be in the key's model list |
-| `PUT` | `/api/settings/ai/chat-provider` | Choose which provider answers (`{ "provider": "openai" }`) |
-| `DELETE` | `/api/settings/ai/keys/{provider}` | Remove a saved key |
+| `PUT` | `/api/settings/ai/keys/{provider}` | **Admin.** Verify and save a key (`{ "apiKey": "…" }`). Returns the models the key can use. `provider` is `anthropic`, `openai`, `gemini` or `voyage` |
+| `GET` | `/api/settings/ai/keys/{provider}/models` | **Admin.** List the chat models the saved key can use |
+| `PUT` | `/api/settings/ai/keys/{provider}/model` | **Admin.** Choose a chat model (`{ "model": "…" }`); it must be in the key's model list |
+| `PUT` | `/api/settings/ai/chat-provider` | **Admin.** Choose which provider answers (`{ "provider": "openai" }`) |
+| `DELETE` | `/api/settings/ai/keys/{provider}` | **Admin.** Remove a saved key |
 
 Errors use the standard [Problem Details](https://www.rfc-editor.org/rfc/rfc9457) JSON format. Example requests for every endpoint are in [`DocuMind.Api.http`](src/Backend/DocuMind.Api/DocuMind.Api.http).
 
@@ -486,7 +594,10 @@ Branches: new work happens on feature branches (for example `feature/byok-api-ke
 
 ## Known limitations
 
-- **No sign-in yet:** the tenant comes from a header and a development fallback. Don't expose the API publicly in this state. Anyone who can reach it could replace a tenant's API keys. Once sign-in exists, Settings must be limited to tenant admins.
+- **Invitations aren't emailed:** the Admin copies the invitation link and sends it themselves. There is also no password reset or email verification for self sign-up yet; both need an email service.
+- **One company per account:** an email can belong to one company. Inviting an address that already has an account is refused.
+- **Sign-out is local:** signing out deletes the session cookie. A copy of the access token taken earlier would stay valid for up to 30 minutes, because bearer tokens can't be revoked (removed members are still locked out by the membership check).
+- **Brute-force protection is per account:** accounts lock after 5 failed attempts. There is no IP-based rate limiting, because all requests reach the API from the Next.js server's address.
 - **Citation quality differs by provider:** Claude's citations come from the API and point at the exact chunk. OpenAI and Gemini rely on the model writing `[n]` markers, which they occasionally skip or misnumber.
 - **Scanned PDFs:** image-only PDFs contain no extractable text and are marked *Failed*. OCR is not supported yet.
 - **One API instance:** the in-memory processing queue doesn't survive across multiple instances; a message broker is needed to scale out.
@@ -503,8 +614,9 @@ Branches: new work happens on feature branches (for example `feature/byok-api-ke
 - [x] Processing pipeline: PDF text extraction, chunking, Voyage embeddings, background worker
 - [x] Question answering with Claude, streaming and page-level citations
 - [x] Bring your own key: per-tenant encrypted keys for Claude, OpenAI, Gemini and Voyage AI
+- [x] Sign-in and companies: email and password accounts, Admin and Member roles, invitation links, Team page
 - [ ] **Compliance and risk audits:** run configurable checklists (for example "has an indemnity clause", "termination notice ≥ 60 days") against each document with Claude and store the findings
-- [ ] **Sign-in and real tenants:** organizations, users and roles; tenant taken from the signed-in user's token
+- [ ] Email delivery for invitations, password reset and email verification; optional Google and Microsoft sign-in
 - [ ] Saved chat history and Markdown rendering
 - [ ] OCR for scanned PDFs
 - [ ] Cloud file storage and a durable job queue

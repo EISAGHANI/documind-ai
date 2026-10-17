@@ -1,32 +1,41 @@
 import Link from "next/link";
 
 import { getAiSettings } from "@/lib/api";
+import { getCurrentUser } from "@/lib/auth";
 import { isReadyForChat } from "@/lib/settings";
 
-// Tells the user which keys are still missing for the current page to work
+// Tells the user which keys are still missing for the current page to work. Admins get a link to
+// Settings; Members are told to ask an admin, since they can't change keys.
 export async function SetupBanner({ needs }: { needs: "indexing" | "chat" }) {
-  let message: string | null = null;
+  let missing: string | null = null;
+  let isAdmin = false;
   try {
-    const settings = await getAiSettings();
+    const [settings, user] = await Promise.all([getAiSettings(), getCurrentUser()]);
+    isAdmin = user?.role === "Admin";
     const voyage = settings.providers.find((p) => p.provider === "voyage");
     if (!voyage?.configured) {
-      message = "Add your Voyage AI API key so documents can be indexed and searched.";
+      missing = "A Voyage AI API key is needed so documents can be indexed and searched.";
     } else if (needs === "chat" && !isReadyForChat(settings)) {
-      message = "Add a Claude, OpenAI or Gemini API key and choose a model to start asking questions.";
+      missing = "A Claude, OpenAI or Gemini API key (with a model) is needed to answer questions.";
     }
   } catch {
     // The page shows its own error when the API is unreachable
     return null;
   }
 
-  if (!message) return null;
+  if (!missing) return null;
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
-      <span>{message}</span>
-      <Link href="/settings" className="font-medium underline underline-offset-2">
-        Open Settings
-      </Link>
+      <span>
+        {missing}
+        {isAdmin ? "" : " Ask a company admin to add it."}
+      </span>
+      {isAdmin ? (
+        <Link href="/settings" className="font-medium underline underline-offset-2">
+          Open Settings
+        </Link>
+      ) : null}
     </div>
   );
 }

@@ -3,8 +3,10 @@ import { Suspense } from "react";
 import { DocumentList } from "./document-list";
 import { SetupBanner } from "./setup-banner";
 import { UploadForm } from "./upload-form";
+import { requireUser } from "@/lib/auth";
 
-export default function Home() {
+export default async function Home() {
+  await requireUser();
   return (
     <div className="flex flex-1 flex-col">
       <main className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-4 py-8 sm:px-6">
