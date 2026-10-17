@@ -1,6 +1,8 @@
+using DocuMind.Api.ApiKeys;
 using DocuMind.Api.Data;
 using DocuMind.Api.Embeddings;
 using DocuMind.Api.Entities;
+using DocuMind.Api.Tenancy;
 using Microsoft.EntityFrameworkCore;
 using Pgvector;
 using Pgvector.EntityFrameworkCore;
@@ -17,7 +19,11 @@ public record RetrievedChunk(
 
 // Finds the chunks most similar to a question. Runs inside the request, so the tenant
 // query filter limits results to the caller's own documents.
-public class RetrievalService(ApplicationDbContext db, IEmbeddingService embeddings)
+public class RetrievalService(
+    ApplicationDbContext db,
+    IEmbeddingService embeddings,
+    ApiKeyStore keys,
+    ITenantProvider tenantProvider)
 {
     public async Task<IReadOnlyList<RetrievedChunk>> RetrieveAsync(
         string question,
@@ -25,7 +31,10 @@ public class RetrievalService(ApplicationDbContext db, IEmbeddingService embeddi
         int limit,
         CancellationToken cancellationToken)
     {
-        var queryEmbedding = (await embeddings.EmbedAsync([question], EmbeddingInputType.Query, cancellationToken))[0];
+        var apiKey = await keys.GetKeyAsync(tenantProvider.TenantId, AiProvider.Voyage, cancellationToken)
+            ?? throw new MissingApiKeyException("Add a Voyage AI API key in Settings to search your documents.");
+
+        var queryEmbedding = (await embeddings.EmbedAsync(apiKey, [question], EmbeddingInputType.Query, cancellationToken))[0];
         var queryVector = new Vector(queryEmbedding);
 
         var query = db.DocumentChunks

@@ -16,6 +16,8 @@ public class ApplicationDbContext : DbContext
 
     public DbSet<Document> Documents => Set<Document>();
     public DbSet<DocumentChunk> DocumentChunks => Set<DocumentChunk>();
+    public DbSet<TenantApiKey> TenantApiKeys => Set<TenantApiKey>();
+    public DbSet<TenantSettings> TenantSettings => Set<TenantSettings>();
 
     // Read on every query, so each request only sees rows for its own tenant
     private Guid CurrentTenantId => _tenantProvider.TenantId;
@@ -56,6 +58,24 @@ public class ApplicationDbContext : DbContext
                 .HasMethod("hnsw")
                 .HasOperators("vector_cosine_ops");
 
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        });
+
+        modelBuilder.Entity<TenantApiKey>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Provider).HasConversion<string>().HasMaxLength(20);
+            entity.Property(e => e.EncryptedKey).IsRequired();
+            entity.Property(e => e.KeyHint).IsRequired().HasMaxLength(20);
+            entity.Property(e => e.Model).HasMaxLength(200);
+            entity.HasIndex(e => new { e.TenantId, e.Provider }).IsUnique();
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        });
+
+        modelBuilder.Entity<TenantSettings>(entity =>
+        {
+            entity.HasKey(e => e.TenantId);
+            entity.Property(e => e.ChatProvider).HasConversion<string>().HasMaxLength(20);
             entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
         });
     }

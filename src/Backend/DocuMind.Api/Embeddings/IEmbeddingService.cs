@@ -11,8 +11,10 @@ public enum EmbeddingInputType
 
 public interface IEmbeddingService
 {
-    // Returns one embedding per input, in the same order as the inputs
+    // Returns one embedding per input, in the same order as the inputs.
+    // The API key is the tenant's own; the model is fixed platform-wide so all vectors stay comparable.
     Task<IReadOnlyList<float[]>> EmbedAsync(
+        string apiKey,
         IReadOnlyList<string> inputs,
         EmbeddingInputType inputType,
         CancellationToken cancellationToken = default);

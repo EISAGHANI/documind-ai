@@ -1,5 +1,8 @@
+using System.ClientModel;
+using System.Net;
 using System.Text.Json;
 using Anthropic.Exceptions;
+using DocuMind.Api.ApiKeys;
 using DocuMind.Api.Chat;
 using Microsoft.AspNetCore.Mvc;
 
@@ -73,10 +76,18 @@ public class ChatController(ChatService chat, ILogger<ChatController> logger) : 
 
     private static string ToUserMessage(Exception ex) => ex switch
     {
-        AnthropicRateLimitException => "Claude is rate limiting requests right now. Please try again in a moment.",
-        Anthropic5xxException => "Claude is temporarily unavailable. Please try again shortly.",
-        AnthropicUnauthorizedException => "The Anthropic API key is missing or invalid.",
-        HttpRequestException => "Could not reach an AI service (Voyage or Claude). Please try again.",
+        MissingApiKeyException => ex.Message,
+        AnthropicUnauthorizedException or ClientResultException { Status: 401 or 403 }
+            or HttpRequestException { StatusCode: HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden } =>
+            "The AI provider rejected the API key saved in Settings. Update the key and try again.",
+        AnthropicRateLimitException or ClientResultException { Status: 429 }
+            or HttpRequestException { StatusCode: HttpStatusCode.TooManyRequests } =>
+            "The AI provider is rate limiting your API key right now. Please try again in a moment.",
+        Anthropic5xxException or ClientResultException { Status: >= 500 } =>
+            "The AI provider is temporarily unavailable. Please try again shortly.",
+        ClientResultException { Status: 404 } =>
+            "The model chosen in Settings isn't available for this API key. Pick another model.",
+        HttpRequestException => "Could not reach an AI service. Please try again.",
         InvalidOperationException => ex.Message,
         _ => "Something went wrong while answering. Please try again.",
     };
