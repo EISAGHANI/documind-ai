@@ -1,5 +1,12 @@
 import "server-only";
 
+import type {
+  AuditRunDetail,
+  AuditRunSummary,
+  Checklist,
+  ChecklistInput,
+  ChecklistTemplate,
+} from "./audits";
 import type { CurrentUser, PendingInvitation, InvitationPreview, TeamMember, TeamRole } from "./auth-types";
 import type { DocumentSummary } from "./documents";
 import { getSession, type TokenResponse } from "./session";
@@ -128,6 +135,74 @@ export async function setChatProvider(provider: ProviderId): Promise<void> {
 
 export async function deleteApiKey(provider: ProviderId): Promise<void> {
   const response = await apiFetch(settingsPath(provider), { method: "DELETE" });
+  if (!response.ok && response.status !== 404) throw await toApiError(response);
+}
+
+// --- Compliance audits
+
+export async function listChecklists(): Promise<Checklist[]> {
+  const response = await apiFetch("/api/audits/checklists");
+  if (!response.ok) throw await toApiError(response);
+  return response.json();
+}
+
+export async function getChecklist(id: string): Promise<Checklist | null> {
+  const response = await apiFetch(`/api/audits/checklists/${encodeURIComponent(id)}`);
+  if (response.status === 404) return null;
+  if (!response.ok) throw await toApiError(response);
+  return response.json();
+}
+
+export async function listChecklistTemplates(): Promise<ChecklistTemplate[]> {
+  const response = await apiFetch("/api/audits/templates");
+  if (!response.ok) throw await toApiError(response);
+  return response.json();
+}
+
+export async function createChecklistFromTemplate(key: string): Promise<Checklist> {
+  const response = await apiFetch(`/api/audits/templates/${encodeURIComponent(key)}`, { method: "POST" });
+  if (!response.ok) throw await toApiError(response);
+  return response.json();
+}
+
+export async function createChecklist(input: ChecklistInput): Promise<Checklist> {
+  const response = await sendJson("/api/audits/checklists", "POST", input);
+  if (!response.ok) throw await toApiError(response);
+  return response.json();
+}
+
+export async function updateChecklist(id: string, input: ChecklistInput): Promise<Checklist> {
+  const response = await sendJson(`/api/audits/checklists/${encodeURIComponent(id)}`, "PUT", input);
+  if (!response.ok) throw await toApiError(response);
+  return response.json();
+}
+
+export async function deleteChecklist(id: string): Promise<void> {
+  const response = await apiFetch(`/api/audits/checklists/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!response.ok && response.status !== 404) throw await toApiError(response);
+}
+
+export async function listAuditRuns(): Promise<AuditRunSummary[]> {
+  const response = await apiFetch("/api/audits/runs");
+  if (!response.ok) throw await toApiError(response);
+  return response.json();
+}
+
+export async function getAuditRun(id: string): Promise<AuditRunDetail | null> {
+  const response = await apiFetch(`/api/audits/runs/${encodeURIComponent(id)}`);
+  if (response.status === 404) return null;
+  if (!response.ok) throw await toApiError(response);
+  return response.json();
+}
+
+export async function startAuditRun(documentId: string, checklistId: string): Promise<AuditRunSummary> {
+  const response = await sendJson("/api/audits/runs", "POST", { documentId, checklistId });
+  if (!response.ok) throw await toApiError(response);
+  return response.json();
+}
+
+export async function deleteAuditRun(id: string): Promise<void> {
+  const response = await apiFetch(`/api/audits/runs/${encodeURIComponent(id)}`, { method: "DELETE" });
   if (!response.ok && response.status !== 404) throw await toApiError(response);
 }
 

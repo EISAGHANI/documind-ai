@@ -8,8 +8,40 @@ namespace DocuMind.Api.Chat;
 // OpenAI and Gemini (through Google's OpenAI-compatible endpoint). These have no native document
 // citations, so sources are numbered in the prompt and the model cites them as [n] in its text;
 // the frontend turns those markers into links.
-public class OpenAICompatibleChatModel(ChatClient client) : IChatModel
+public class OpenAICompatibleChatModel(ChatClient client, string provider, string model) : IChatModel
 {
+    public string Provider => provider;
+    public string Model => model;
+
+    // Strict JSON-schema response format (supported by OpenAI and Gemini's compatible endpoint)
+    public async Task<string> GenerateJsonAsync(StructuredRequest request, CancellationToken cancellationToken)
+    {
+        var options = new ChatCompletionOptions
+        {
+            ResponseFormat = ChatResponseFormat.CreateJsonSchemaFormat(
+                request.SchemaName,
+                BinaryData.FromObjectAsJson(request.Schema),
+                jsonSchemaIsStrict: true),
+            MaxOutputTokenCount = request.MaxTokens,
+        };
+
+        var completion = await client.CompleteChatAsync(
+            [new SystemChatMessage(request.Instructions), new UserChatMessage(request.Input)],
+            options,
+            cancellationToken);
+
+        if (!string.IsNullOrEmpty(completion.Value.Refusal) || completion.Value.FinishReason == ChatFinishReason.ContentFilter)
+        {
+            throw new ModelOutputException("The AI provider declined to review this document.");
+        }
+        if (completion.Value.FinishReason == ChatFinishReason.Length)
+        {
+            throw new ModelOutputException("The review was cut off because it was too long. Try a checklist with fewer checks.");
+        }
+
+        return string.Concat(completion.Value.Content.Select(part => part.Text));
+    }
+
     public async IAsyncEnumerable<ChatStreamEvent> StreamAnswerAsync(
         IReadOnlyList<ChatTurn> history,
         string question,

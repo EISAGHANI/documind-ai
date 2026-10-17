@@ -2,6 +2,8 @@
 # Paste the accessToken from the "Sign in" response below
 @AccessToken = paste-access-token-here
 @DocumentId = 00000000-0000-0000-0000-000000000000
+@ChecklistId = 00000000-0000-0000-0000-000000000000
+@RunId = 00000000-0000-0000-0000-000000000000
 
 ### Create a company account (you become its Admin); returns accessToken + refreshToken
 POST {{DocuMind.Api_HostAddress}}/api/auth/register
@@ -105,4 +107,65 @@ Content-Type: application/json
 
 ### Remove a saved key
 DELETE {{DocuMind.Api_HostAddress}}/api/settings/ai/keys/openai
+Authorization: Bearer {{AccessToken}}
+
+### Compliance audits: list the starter checklist templates
+GET {{DocuMind.Api_HostAddress}}/api/audits/templates
+Authorization: Bearer {{AccessToken}}
+
+### Copy a template into your company's checklists (Admin only)
+POST {{DocuMind.Api_HostAddress}}/api/audits/templates/commercial-contract
+Authorization: Bearer {{AccessToken}}
+
+### List checklists
+GET {{DocuMind.Api_HostAddress}}/api/audits/checklists
+Authorization: Bearer {{AccessToken}}
+
+### Create a checklist (Admin only; severity: Low | Medium | High; at most 40 checks)
+POST {{DocuMind.Api_HostAddress}}/api/audits/checklists
+Authorization: Bearer {{AccessToken}}
+Content-Type: application/json
+
+{
+  "name": "Supplier contract review",
+  "description": "Our minimum terms for suppliers",
+  "checks": [
+    { "title": "Termination notice", "requirement": "Termination for convenience requires at least 90 days' written notice.", "severity": "Medium" },
+    { "title": "Liability cap", "requirement": "The supplier's liability is capped at no less than the fees paid in the previous 12 months.", "severity": "High" }
+  ]
+}
+
+### Replace a checklist's name, description and checks (Admin only)
+PUT {{DocuMind.Api_HostAddress}}/api/audits/checklists/{{ChecklistId}}
+Authorization: Bearer {{AccessToken}}
+Content-Type: application/json
+
+{
+  "name": "Supplier contract review",
+  "checks": [
+    { "title": "Termination notice", "requirement": "Termination for convenience requires at least 60 days' written notice.", "severity": "Medium" }
+  ]
+}
+
+### Delete a checklist (Admin only; existing reports are kept)
+DELETE {{DocuMind.Api_HostAddress}}/api/audits/checklists/{{ChecklistId}}
+Authorization: Bearer {{AccessToken}}
+
+### Start an audit of a processed document (runs in the background; poll the run below)
+POST {{DocuMind.Api_HostAddress}}/api/audits/runs
+Authorization: Bearer {{AccessToken}}
+Content-Type: application/json
+
+{ "documentId": "{{DocumentId}}", "checklistId": "{{ChecklistId}}" }
+
+### List audit runs (optionally ?documentId=...)
+GET {{DocuMind.Api_HostAddress}}/api/audits/runs
+Authorization: Bearer {{AccessToken}}
+
+### Get an audit report with findings and evidence
+GET {{DocuMind.Api_HostAddress}}/api/audits/runs/{{RunId}}
+Authorization: Bearer {{AccessToken}}
+
+### Delete an audit report
+DELETE {{DocuMind.Api_HostAddress}}/api/audits/runs/{{RunId}}
 Authorization: Bearer {{AccessToken}}
