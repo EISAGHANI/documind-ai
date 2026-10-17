@@ -12,26 +12,22 @@ public class VoyageEmbeddingService(HttpClient httpClient, IOptions<VoyageOption
     private readonly VoyageOptions _options = options.Value;
 
     public async Task<IReadOnlyList<float[]>> EmbedAsync(
+        string apiKey,
         IReadOnlyList<string> inputs,
         EmbeddingInputType inputType,
         CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(_options.ApiKey))
-        {
-            throw new InvalidOperationException(
-                "Voyage API key is not configured. Run: dotnet user-secrets set \"Voyage:ApiKey\" \"<your key>\"");
-        }
-
         var embeddings = new List<float[]>(inputs.Count);
         foreach (var batch in inputs.Chunk(_options.BatchSize))
         {
-            embeddings.AddRange(await EmbedBatchAsync(batch, inputType, cancellationToken));
+            embeddings.AddRange(await EmbedBatchAsync(apiKey, batch, inputType, cancellationToken));
         }
 
         return embeddings;
     }
 
     private async Task<float[][]> EmbedBatchAsync(
+        string apiKey,
         string[] batch,
         EmbeddingInputType inputType,
         CancellationToken cancellationToken)
@@ -46,7 +42,7 @@ public class VoyageEmbeddingService(HttpClient httpClient, IOptions<VoyageOption
         {
             Content = JsonContent.Create(request),
         };
-        message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.ApiKey);
+        message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
         using var response = await httpClient.SendAsync(message, cancellationToken);
         if (!response.IsSuccessStatusCode)

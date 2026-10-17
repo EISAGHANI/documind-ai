@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 const links = [
   { href: "/", label: "Documents" },
   { href: "/chat", label: "Ask" },
+  { href: "/settings", label: "Settings" },
 ];
 
 export function SiteHeader() {

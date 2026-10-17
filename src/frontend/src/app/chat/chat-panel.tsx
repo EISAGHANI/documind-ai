@@ -205,8 +205,11 @@ export function ChatPanel() {
 
 function AssistantBubble({ message }: { message: AssistantMessage }) {
   const text = answerText(message);
-  // Only list sources Claude actually cited; fall back to all retrieved ones if it cited none
-  const citedIndexes = new Set(message.segments.flatMap((s) => s.citations));
+  // Only list sources that were actually cited (natively or as [n] markers); fall back to all retrieved ones
+  const citedIndexes = new Set([
+    ...message.segments.flatMap((s) => s.citations),
+    ...markerIndexes(text, message.sources.length),
+  ]);
   const shownSources = citedIndexes.size
     ? message.sources.filter((s) => citedIndexes.has(s.index))
     : message.status === "done" ? message.sources : [];
@@ -217,7 +220,7 @@ function AssistantBubble({ message }: { message: AssistantMessage }) {
         <p className="text-sm leading-6 text-zinc-800 whitespace-pre-wrap dark:text-zinc-200">
           {message.segments.map((segment, i) => (
             <span key={i}>
-              {segment.text}
+              <TextWithMarkers text={segment.text} sources={message.sources} />
               {segment.citations.map((sourceIndex) => (
                 <CitationMarker key={sourceIndex} source={message.sources[sourceIndex]} />
               ))}
@@ -249,6 +252,30 @@ function AssistantBubble({ message }: { message: AssistantMessage }) {
       ) : null}
     </div>
   );
+}
+
+// Providers without native citations (OpenAI, Gemini) cite sources as "[n]" in the text
+const MARKER_PATTERN = /\[(\d{1,2})\]/g;
+
+function markerIndexes(text: string, sourceCount: number): number[] {
+  return [...text.matchAll(MARKER_PATTERN)]
+    .map((match) => Number(match[1]) - 1)
+    .filter((index) => index >= 0 && index < sourceCount);
+}
+
+function TextWithMarkers({ text, sources }: { text: string; sources: ChatSource[] }) {
+  const parts: React.ReactNode[] = [];
+  let last = 0;
+  for (const match of text.matchAll(MARKER_PATTERN)) {
+    const source = sources[Number(match[1]) - 1];
+    // Leave numbers that don't match a retrieved source as plain text
+    if (!source) continue;
+    parts.push(text.slice(last, match.index));
+    parts.push(<CitationMarker key={match.index} source={source} />);
+    last = match.index + match[0].length;
+  }
+  parts.push(text.slice(last));
+  return <>{parts}</>;
 }
 
 function CitationMarker({ source }: { source: ChatSource | undefined }) {

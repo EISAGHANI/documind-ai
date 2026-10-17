@@ -1,10 +1,11 @@
-using Anthropic;
+using DocuMind.Api.ApiKeys;
 using DocuMind.Api.Chat;
 using DocuMind.Api.Data;
 using DocuMind.Api.Embeddings;
 using DocuMind.Api.Processing;
 using DocuMind.Api.Storage;
 using DocuMind.Api.Tenancy;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Scalar.AspNetCore;
@@ -43,17 +44,26 @@ builder.Services.AddSingleton<IDocumentProcessingQueue, DocumentProcessingQueue>
 builder.Services.AddScoped<DocumentProcessor>();
 builder.Services.AddHostedService<DocumentProcessingWorker>();
 
-// 4. Question answering over documents with Claude
-builder.Services.Configure<ClaudeOptions>(builder.Configuration.GetSection(ClaudeOptions.SectionName));
-builder.Services.AddSingleton(services =>
+// 4. Bring-your-own-key: tenants' AI provider keys, encrypted with Data Protection.
+// Set DataProtection:KeysPath in production so the encryption keys survive restarts and are shared
+// between instances; without it saved API keys become unreadable when the key ring is lost.
+var dataProtection = builder.Services.AddDataProtection().SetApplicationName("DocuMind");
+if (builder.Configuration["DataProtection:KeysPath"] is { Length: > 0 } keysPath)
 {
-    var apiKey = services.GetRequiredService<IOptions<ClaudeOptions>>().Value.ApiKey;
-    return string.IsNullOrWhiteSpace(apiKey) ? new AnthropicClient() : new AnthropicClient { ApiKey = apiKey };
-});
+    dataProtection.PersistKeysToFileSystem(new DirectoryInfo(keysPath));
+}
+builder.Services.Configure<ProviderEndpointsOptions>(builder.Configuration.GetSection(ProviderEndpointsOptions.SectionName));
+builder.Services.AddSingleton<AiClientCache>();
+builder.Services.AddScoped<ApiKeyStore>();
+builder.Services.AddScoped<ApiKeyValidator>();
+
+// 5. Question answering over documents with the tenant's chosen chat provider
+builder.Services.Configure<ClaudeOptions>(builder.Configuration.GetSection(ClaudeOptions.SectionName));
+builder.Services.AddScoped<ChatModelFactory>();
 builder.Services.AddScoped<RetrievalService>();
 builder.Services.AddScoped<ChatService>();
 
-// 5. Allow the Next.js frontend to call the API
+// 6. Allow the Next.js frontend to call the API
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
 builder.Services.AddCors(options =>
     options.AddPolicy(FrontendCorsPolicy, policy =>
@@ -62,12 +72,12 @@ builder.Services.AddCors(options =>
 builder.Services.AddControllers();
 builder.Services.AddProblemDetails();
 
-// 6. Register native OpenAPI services (No Swashbuckle required!)
+// 7. Register native OpenAPI services (No Swashbuckle required!)
 builder.Services.AddOpenApi();
 
 var app = builder.Build();
 
-// 7. Enable OpenAPI endpoint and Scalar UI in Development
+// 8. Enable OpenAPI endpoint and Scalar UI in Development
 if (app.Environment.IsDevelopment())
 {
     // Generates the /openapi/v1.json document

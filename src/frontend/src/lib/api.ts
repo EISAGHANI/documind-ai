@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { DocumentSummary } from "./documents";
+import type { AiProviderStatus, AiSettings, ProviderId } from "./settings";
 
 // The browser never calls the .NET API directly: requests go through the Next.js server,
 // which adds the tenant header (and, later, the user's access token).
@@ -61,5 +62,54 @@ export async function reprocessDocument(id: string): Promise<void> {
 
 export async function deleteDocument(id: string): Promise<void> {
   const response = await apiFetch(`/api/documents/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!response.ok && response.status !== 404) throw await toApiError(response);
+}
+
+// --- AI provider settings (bring your own key). Keys are sent to the API once and never read back.
+
+const settingsPath = (provider?: ProviderId, suffix = "") =>
+  `/api/settings/ai${provider ? `/keys/${provider}` : ""}${suffix}`;
+
+async function sendJson(path: string, method: string, body?: unknown): Promise<Response> {
+  return apiFetch(path, {
+    method,
+    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+
+export async function getAiSettings(): Promise<AiSettings> {
+  const response = await apiFetch(settingsPath());
+  if (!response.ok) throw await toApiError(response);
+  return response.json();
+}
+
+export async function saveApiKey(
+  provider: ProviderId,
+  apiKey: string,
+): Promise<{ status: AiProviderStatus; models: string[] }> {
+  const response = await sendJson(settingsPath(provider), "PUT", { apiKey });
+  if (!response.ok) throw await toApiError(response);
+  return response.json();
+}
+
+export async function listModels(provider: ProviderId): Promise<string[]> {
+  const response = await apiFetch(settingsPath(provider, "/models"));
+  if (!response.ok) throw await toApiError(response);
+  return (await response.json()).models;
+}
+
+export async function setModel(provider: ProviderId, model: string): Promise<void> {
+  const response = await sendJson(settingsPath(provider, "/model"), "PUT", { model });
+  if (!response.ok) throw await toApiError(response);
+}
+
+export async function setChatProvider(provider: ProviderId): Promise<void> {
+  const response = await sendJson(`${settingsPath()}/chat-provider`, "PUT", { provider });
+  if (!response.ok) throw await toApiError(response);
+}
+
+export async function deleteApiKey(provider: ProviderId): Promise<void> {
+  const response = await apiFetch(settingsPath(provider), { method: "DELETE" });
   if (!response.ok && response.status !== 404) throw await toApiError(response);
 }

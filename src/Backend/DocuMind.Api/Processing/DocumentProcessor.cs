@@ -1,3 +1,4 @@
+using DocuMind.Api.ApiKeys;
 using DocuMind.Api.Data;
 using DocuMind.Api.Embeddings;
 using DocuMind.Api.Entities;
@@ -14,6 +15,7 @@ public class DocumentProcessor(
     ApplicationDbContext db,
     IFileStorage storage,
     IEmbeddingService embeddings,
+    ApiKeyStore keys,
     ILogger<DocumentProcessor> logger)
 {
     private const int MaxErrorLength = 1000;
@@ -62,6 +64,11 @@ public class DocumentProcessor(
 
     private async Task<List<DocumentChunk>> BuildChunksAsync(Document document, CancellationToken cancellationToken)
     {
+        // Embeddings are paid with the tenant's own Voyage key
+        var apiKey = await keys.GetKeyAsync(document.TenantId, AiProvider.Voyage, cancellationToken)
+            ?? throw new MissingApiKeyException(
+                "No Voyage AI API key is set for this workspace. Add one in Settings, then click Retry.");
+
         // PdfPig needs a seekable stream; storage streams may not be
         using var pdf = new MemoryStream();
         await using (var file = await storage.OpenReadAsync(document.StoragePath, cancellationToken)
@@ -80,6 +87,7 @@ public class DocumentProcessor(
         }
 
         var vectors = await embeddings.EmbedAsync(
+            apiKey,
             textChunks.Select(c => c.Content).ToList(),
             EmbeddingInputType.Document,
             cancellationToken);

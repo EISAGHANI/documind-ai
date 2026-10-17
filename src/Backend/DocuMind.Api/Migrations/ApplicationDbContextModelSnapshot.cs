@@ -118,6 +118,59 @@ namespace DocuMind.Api.Migrations
                     b.ToTable("DocumentChunks");
                 });
 
+            modelBuilder.Entity("DocuMind.Api.Entities.TenantApiKey", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("EncryptedKey")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("KeyHint")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("Model")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "Provider")
+                        .IsUnique();
+
+                    b.ToTable("TenantApiKeys");
+                });
+
+            modelBuilder.Entity("DocuMind.Api.Entities.TenantSettings", b =>
+                {
+                    b.Property<Guid>("TenantId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ChatProvider")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.HasKey("TenantId");
+
+                    b.ToTable("TenantSettings");
+                });
+
             modelBuilder.Entity("DocuMind.Api.Entities.DocumentChunk", b =>
                 {
                     b.HasOne("DocuMind.Api.Entities.Document", "Document")

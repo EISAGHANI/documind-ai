@@ -1,12 +1,14 @@
 import { Suspense } from "react";
 
 import { DocumentList } from "./document-list";
+import { SetupBanner } from "./setup-banner";
 import { UploadForm } from "./upload-form";
 
 export default function Home() {
   return (
     <div className="flex flex-1 flex-col">
       <main className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-4 py-8 sm:px-6">
+        <SetupBanner needs="indexing" />
         <section className="rounded-2xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
           <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">Upload a document</h1>
           <p className="mb-5 mt-1 text-sm text-zinc-500">
