@@ -5,12 +5,12 @@
       "name": "⚙️ Backend (.NET)"
     },
     {
-      "path": "src/Frontend",
+      "path": "src/frontend",
       "name": "🖥️ Frontend (Next.js)"
     },
     {
-      "path": "infra",
-      "name": "🐳 Infrastructure"
+      "path": ".",
+      "name": "🐳 Root (Docker Compose, README)"
     }
   ],
   "settings": {}
