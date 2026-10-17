@@ -1,6 +1,36 @@
 @DocuMind.Api_HostAddress = http://localhost:5288
+@TenantId = 00000000-0000-0000-0000-000000000001
+@DocumentId = 00000000-0000-0000-0000-000000000000
 
-GET {{DocuMind.Api_HostAddress}}/weatherforecast/
+### List documents
+GET {{DocuMind.Api_HostAddress}}/api/documents
+X-Tenant-Id: {{TenantId}}
 Accept: application/json
 
-###
+### Upload a PDF (put a sample.pdf next to this file)
+POST {{DocuMind.Api_HostAddress}}/api/documents
+X-Tenant-Id: {{TenantId}}
+Content-Type: multipart/form-data; boundary=DocuMindBoundary
+
+--DocuMindBoundary
+Content-Disposition: form-data; name="title"
+
+Sample contract
+--DocuMindBoundary
+Content-Disposition: form-data; name="file"; filename="sample.pdf"
+Content-Type: application/pdf
+
+< ./sample.pdf
+--DocuMindBoundary--
+
+### Get one document
+GET {{DocuMind.Api_HostAddress}}/api/documents/{{DocumentId}}
+X-Tenant-Id: {{TenantId}}
+
+### Download the original file
+GET {{DocuMind.Api_HostAddress}}/api/documents/{{DocumentId}}/file
+X-Tenant-Id: {{TenantId}}
+
+### Delete a document
+DELETE {{DocuMind.Api_HostAddress}}/api/documents/{{DocumentId}}
+X-Tenant-Id: {{TenantId}}

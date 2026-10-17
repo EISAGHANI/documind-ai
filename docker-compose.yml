@@ -1,18 +1,22 @@
-version: '3.8'
-
 services:
   db:
-    # We use a specific image that has PostgreSQL and pgvector pre-installed
-    image: ankane/pgvector:latest
+    # PostgreSQL with the pgvector extension pre-installed
+    image: pgvector/pgvector:pg17
     container_name: documind_db
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: Password123!
-      POSTGRES_DB: documind
+      # Values come from the .env file next to this compose file (see .env.example)
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-documind}
     ports:
       - "5432:5432"
     volumes:
       - documind_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 volumes:
   documind_data:
