@@ -1,3 +1,5 @@
+using Anthropic;
+using DocuMind.Api.Chat;
 using DocuMind.Api.Data;
 using DocuMind.Api.Embeddings;
 using DocuMind.Api.Processing;
@@ -41,7 +43,17 @@ builder.Services.AddSingleton<IDocumentProcessingQueue, DocumentProcessingQueue>
 builder.Services.AddScoped<DocumentProcessor>();
 builder.Services.AddHostedService<DocumentProcessingWorker>();
 
-// 4. Allow the Next.js frontend to call the API
+// 4. Question answering over documents with Claude
+builder.Services.Configure<ClaudeOptions>(builder.Configuration.GetSection(ClaudeOptions.SectionName));
+builder.Services.AddSingleton(services =>
+{
+    var apiKey = services.GetRequiredService<IOptions<ClaudeOptions>>().Value.ApiKey;
+    return string.IsNullOrWhiteSpace(apiKey) ? new AnthropicClient() : new AnthropicClient { ApiKey = apiKey };
+});
+builder.Services.AddScoped<RetrievalService>();
+builder.Services.AddScoped<ChatService>();
+
+// 5. Allow the Next.js frontend to call the API
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
 builder.Services.AddCors(options =>
     options.AddPolicy(FrontendCorsPolicy, policy =>
@@ -50,12 +62,12 @@ builder.Services.AddCors(options =>
 builder.Services.AddControllers();
 builder.Services.AddProblemDetails();
 
-// 5. Register native OpenAPI services (No Swashbuckle required!)
+// 6. Register native OpenAPI services (No Swashbuckle required!)
 builder.Services.AddOpenApi();
 
 var app = builder.Build();
 
-// 6. Enable OpenAPI endpoint and Scalar UI in Development
+// 7. Enable OpenAPI endpoint and Scalar UI in Development
 if (app.Environment.IsDevelopment())
 {
     // Generates the /openapi/v1.json document
