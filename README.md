@@ -480,7 +480,7 @@ Errors use the standard [Problem Details](https://www.rfc-editor.org/rfc/rfc9457
 | Production build of the frontend | `npm run build` |
 | Inspect the database | `docker exec -it documind_db psql -U postgres -d documind` |
 
-Branches: work happens on feature branches (for example `feature/document-upload`) and is merged into `main` through pull requests.
+Branches: new work happens on feature branches (for example `feature/byok-api-keys`) and is merged into `main` once it builds and has been tested.
 
 ---
 
