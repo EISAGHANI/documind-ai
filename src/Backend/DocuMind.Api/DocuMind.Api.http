@@ -1,15 +1,43 @@
 @DocuMind.Api_HostAddress = http://localhost:5288
-@TenantId = 00000000-0000-0000-0000-000000000001
+# Paste the accessToken from the "Sign in" response below
+@AccessToken = paste-access-token-here
 @DocumentId = 00000000-0000-0000-0000-000000000000
+
+### Create a company account (you become its Admin); returns accessToken + refreshToken
+POST {{DocuMind.Api_HostAddress}}/api/auth/register
+Content-Type: application/json
+
+{ "companyName": "Acme Ltd", "displayName": "Alice", "email": "alice@acme.example", "password": "a-long-passphrase" }
+
+### Sign in
+POST {{DocuMind.Api_HostAddress}}/api/auth/login
+Content-Type: application/json
+
+{ "email": "alice@acme.example", "password": "a-long-passphrase" }
+
+### Who am I (company and role)
+GET {{DocuMind.Api_HostAddress}}/api/auth/me
+Authorization: Bearer {{AccessToken}}
+
+### Invite a colleague (Admin only); returns a one-time token for the /invite/{token} link
+POST {{DocuMind.Api_HostAddress}}/api/team/invitations
+Authorization: Bearer {{AccessToken}}
+Content-Type: application/json
+
+{ "email": "bob@acme.example", "role": "Member" }
+
+### List team members
+GET {{DocuMind.Api_HostAddress}}/api/team/members
+Authorization: Bearer {{AccessToken}}
 
 ### List documents
 GET {{DocuMind.Api_HostAddress}}/api/documents
-X-Tenant-Id: {{TenantId}}
+Authorization: Bearer {{AccessToken}}
 Accept: application/json
 
 ### Upload a PDF (put a sample.pdf next to this file)
 POST {{DocuMind.Api_HostAddress}}/api/documents
-X-Tenant-Id: {{TenantId}}
+Authorization: Bearer {{AccessToken}}
 Content-Type: multipart/form-data; boundary=DocuMindBoundary
 
 --DocuMindBoundary
@@ -25,56 +53,56 @@ Content-Type: application/pdf
 
 ### Get one document
 GET {{DocuMind.Api_HostAddress}}/api/documents/{{DocumentId}}
-X-Tenant-Id: {{TenantId}}
+Authorization: Bearer {{AccessToken}}
 
 ### Download the original file
 GET {{DocuMind.Api_HostAddress}}/api/documents/{{DocumentId}}/file
-X-Tenant-Id: {{TenantId}}
+Authorization: Bearer {{AccessToken}}
 
 ### Delete a document
 DELETE {{DocuMind.Api_HostAddress}}/api/documents/{{DocumentId}}
-X-Tenant-Id: {{TenantId}}
+Authorization: Bearer {{AccessToken}}
 
 ### Re-queue a document for processing (e.g. after adding a Voyage key)
 POST {{DocuMind.Api_HostAddress}}/api/documents/{{DocumentId}}/reprocess
-X-Tenant-Id: {{TenantId}}
+Authorization: Bearer {{AccessToken}}
 
 ### Ask a question (streams server-sent events)
 POST {{DocuMind.Api_HostAddress}}/api/chat
-X-Tenant-Id: {{TenantId}}
+Authorization: Bearer {{AccessToken}}
 Content-Type: application/json
 
 { "messages": [{ "role": "user", "content": "What are the payment terms?" }] }
 
 ### AI provider settings: which keys are saved (hints only) and which provider answers
 GET {{DocuMind.Api_HostAddress}}/api/settings/ai
-X-Tenant-Id: {{TenantId}}
+Authorization: Bearer {{AccessToken}}
 
 ### Save and verify a key (provider: anthropic | openai | gemini | voyage)
 PUT {{DocuMind.Api_HostAddress}}/api/settings/ai/keys/voyage
-X-Tenant-Id: {{TenantId}}
+Authorization: Bearer {{AccessToken}}
 Content-Type: application/json
 
 { "apiKey": "<your Voyage AI key>" }
 
 ### List the chat models a saved key can use
 GET {{DocuMind.Api_HostAddress}}/api/settings/ai/keys/openai/models
-X-Tenant-Id: {{TenantId}}
+Authorization: Bearer {{AccessToken}}
 
 ### Choose a chat model
 PUT {{DocuMind.Api_HostAddress}}/api/settings/ai/keys/openai/model
-X-Tenant-Id: {{TenantId}}
+Authorization: Bearer {{AccessToken}}
 Content-Type: application/json
 
 { "model": "<a model id from the list above>" }
 
 ### Choose which provider answers questions
 PUT {{DocuMind.Api_HostAddress}}/api/settings/ai/chat-provider
-X-Tenant-Id: {{TenantId}}
+Authorization: Bearer {{AccessToken}}
 Content-Type: application/json
 
 { "provider": "anthropic" }
 
 ### Remove a saved key
 DELETE {{DocuMind.Api_HostAddress}}/api/settings/ai/keys/openai
-X-Tenant-Id: {{TenantId}}
+Authorization: Bearer {{AccessToken}}

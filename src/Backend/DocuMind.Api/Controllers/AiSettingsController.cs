@@ -4,13 +4,14 @@ using DocuMind.Api.Contracts;
 using DocuMind.Api.Embeddings;
 using DocuMind.Api.Entities;
 using DocuMind.Api.Tenancy;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 
 namespace DocuMind.Api.Controllers;
 
 // Bring-your-own-key settings for the current tenant. Keys are write-only: responses only ever
-// include a short hint (last 4 characters). Restrict to tenant admins once sign-in exists.
+// include a short hint (last 4 characters). Any member can see the status; only Admins can change it.
 [ApiController]
 [Route("api/settings/ai")]
 public class AiSettingsController(
@@ -38,6 +39,7 @@ public class AiSettingsController(
     }
 
     // Verifies the key with the provider, then stores it encrypted
+    [Authorize(Policy = TenantClaims.AdminPolicy)]
     [HttpPut("keys/{provider}")]
     public async Task<ActionResult<SaveApiKeyResponse>> SaveKey(
         string provider, SaveApiKeyRequest request, CancellationToken cancellationToken)
@@ -70,6 +72,7 @@ public class AiSettingsController(
         return new SaveApiKeyResponse(ToStatus(aiProvider, entry), check.Models);
     }
 
+    [Authorize(Policy = TenantClaims.AdminPolicy)]
     [HttpGet("keys/{provider}/models")]
     public async Task<ActionResult<ModelListResponse>> ListModels(string provider, CancellationToken cancellationToken)
     {
@@ -90,6 +93,7 @@ public class AiSettingsController(
             : Problem(check.Error, statusCode: StatusCodes.Status400BadRequest);
     }
 
+    [Authorize(Policy = TenantClaims.AdminPolicy)]
     [HttpPut("keys/{provider}/model")]
     public async Task<ActionResult<AiProviderStatus>> SetModel(
         string provider, SetModelRequest request, CancellationToken cancellationToken)
@@ -131,6 +135,7 @@ public class AiSettingsController(
         return ToStatus(aiProvider, entry);
     }
 
+    [Authorize(Policy = TenantClaims.AdminPolicy)]
     [HttpPut("chat-provider")]
     public async Task<IActionResult> SetChatProvider(SetChatProviderRequest request, CancellationToken cancellationToken)
     {
@@ -159,6 +164,7 @@ public class AiSettingsController(
         return NoContent();
     }
 
+    [Authorize(Policy = TenantClaims.AdminPolicy)]
     [HttpDelete("keys/{provider}")]
     public async Task<IActionResult> DeleteKey(string provider, CancellationToken cancellationToken)
     {

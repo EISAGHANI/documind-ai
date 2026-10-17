@@ -1,10 +1,13 @@
 using DocuMind.Api.Entities;
 using DocuMind.Api.Tenancy;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 
 namespace DocuMind.Api.Data;
 
-public class ApplicationDbContext : DbContext
+// Holds the ASP.NET Core Identity tables (users, logins, tokens) alongside the application data
+public class ApplicationDbContext : IdentityDbContext<ApplicationUser, IdentityRole<Guid>, Guid>
 {
     private readonly ITenantProvider _tenantProvider;
 
@@ -18,6 +21,9 @@ public class ApplicationDbContext : DbContext
     public DbSet<DocumentChunk> DocumentChunks => Set<DocumentChunk>();
     public DbSet<TenantApiKey> TenantApiKeys => Set<TenantApiKey>();
     public DbSet<TenantSettings> TenantSettings => Set<TenantSettings>();
+    public DbSet<Tenant> Tenants => Set<Tenant>();
+    public DbSet<TenantMembership> TenantMemberships => Set<TenantMembership>();
+    public DbSet<TenantInvitation> TenantInvitations => Set<TenantInvitation>();
 
     // Read on every query, so each request only sees rows for its own tenant
     private Guid CurrentTenantId => _tenantProvider.TenantId;
@@ -76,6 +82,41 @@ public class ApplicationDbContext : DbContext
         {
             entity.HasKey(e => e.TenantId);
             entity.Property(e => e.ChatProvider).HasConversion<string>().HasMaxLength(20);
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        });
+
+        modelBuilder.Entity<ApplicationUser>(entity =>
+        {
+            entity.Property(e => e.DisplayName).IsRequired().HasMaxLength(100);
+        });
+
+        modelBuilder.Entity<Tenant>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Name).IsRequired().HasMaxLength(100);
+        });
+
+        modelBuilder.Entity<TenantMembership>(entity =>
+        {
+            entity.HasKey(e => new { e.TenantId, e.UserId });
+            entity.Property(e => e.Role).HasConversion<string>().HasMaxLength(20);
+            entity.HasOne(e => e.Tenant).WithMany().HasForeignKey(e => e.TenantId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.User).WithMany().HasForeignKey(e => e.UserId).OnDelete(DeleteBehavior.Cascade);
+
+            // One company per user for now
+            entity.HasIndex(e => e.UserId).IsUnique();
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        });
+
+        modelBuilder.Entity<TenantInvitation>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Email).IsRequired().HasMaxLength(256);
+            entity.Property(e => e.Role).HasConversion<string>().HasMaxLength(20);
+            entity.Property(e => e.TokenHash).IsRequired().HasMaxLength(64);
+            entity.HasIndex(e => e.TokenHash).IsUnique();
+            entity.HasIndex(e => new { e.TenantId, e.Email });
+            entity.HasOne(e => e.Tenant).WithMany().HasForeignKey(e => e.TenantId).OnDelete(DeleteBehavior.Cascade);
             entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
         });
     }
