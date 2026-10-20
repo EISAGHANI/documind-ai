@@ -42,6 +42,9 @@ public class ChatController(ChatService chat, ILogger<ChatController> logger) : 
                     case SourcesStreamEvent sources:
                         await WriteEventAsync("sources", sources.Sources, cancellationToken);
                         break;
+                    case ConversationStreamEvent conversation:
+                        await WriteEventAsync("conversation", new ChatConversationEvent(conversation.ConversationId), cancellationToken);
+                        break;
                     case BlockStartStreamEvent:
                         await WriteEventAsync("block", new { }, cancellationToken);
                         break;

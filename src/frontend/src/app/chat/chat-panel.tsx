@@ -27,6 +27,8 @@ export function ChatPanel() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  // Set by the API's first stream event so follow-ups continue the same persisted conversation
+  const conversationIdRef = useRef<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -67,7 +69,10 @@ export function ChatPanel() {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: [...history, { role: "user", content: question }] }),
+        body: JSON.stringify({
+          messages: [...history, { role: "user", content: question }],
+          conversationId: conversationIdRef.current,
+        }),
         signal: controller.signal,
       });
 
@@ -85,6 +90,9 @@ export function ChatPanel() {
 
       for await (const event of readChatStream(response.body)) {
         switch (event.type) {
+          case "conversation":
+            conversationIdRef.current = event.conversationId;
+            break;
           case "sources":
             updateLast((m) => ({ ...m, sources: event.sources }));
             break;

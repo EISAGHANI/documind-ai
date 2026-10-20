@@ -19,7 +19,8 @@ public class DocumentsController(
     IFileStorage storage,
     ITenantProvider tenantProvider,
     IOptions<QuotaOptions> quotaOptions,
-    IDocumentProcessingQueue processingQueue) : ControllerBase
+    IDocumentProcessingQueue processingQueue,
+    DocuMind.Api.Activity.IActivityLog activity) : ControllerBase
 {
     private const long MaxFileSizeBytes = 50 * 1024 * 1024;
     private static readonly byte[] PdfSignature = "%PDF-"u8.ToArray();
@@ -138,6 +139,7 @@ public class DocumentsController(
         }
 
         await processingQueue.EnqueueAsync(document.Id, cancellationToken);
+        await activity.RecordAsync("document.upload", "Document", document.Id, document.FileName, cancellationToken);
 
         return CreatedAtAction(nameof(GetById), new { id = document.Id }, DocumentResponse.FromEntity(document));
     }
@@ -161,6 +163,7 @@ public class DocumentsController(
         document.ProcessingError = null;
         await db.SaveChangesAsync(cancellationToken);
         await processingQueue.EnqueueAsync(document.Id, cancellationToken);
+        await activity.RecordAsync("document.reprocess", "Document", document.Id, null, cancellationToken);
 
         return Accepted(DocumentResponse.FromEntity(document));
     }
@@ -177,6 +180,7 @@ public class DocumentsController(
         db.Documents.Remove(document);
         await db.SaveChangesAsync(cancellationToken);
         await storage.DeleteAsync(document.StoragePath, cancellationToken);
+        await activity.RecordAsync("document.delete", "Document", document.Id, document.FileName, cancellationToken);
 
         return NoContent();
     }

@@ -521,6 +521,19 @@ Then upload a PDF on **Documents**, wait for it to show **Processed**, and ask a
 | `AiProviders:GeminiBaseUrl` | `https://generativelanguage.googleapis.com/v1beta/openai/` | Gemini's OpenAI-compatible endpoint |
 | `DataProtection:KeysPath` | *(empty)* | Folder for the keys that encrypt tenants' API keys **and sign-in tokens**. **Set this in production**. Empty uses the OS default store (fine for local development) |
 | `Cors:AllowedOrigins` | `http://localhost:3000` (dev) | Origins allowed to call the API directly |
+| `Jobs:Mode` | `All` | `Api` (HTTP only), `Worker` (background jobs only) or `All`. Run workers as a separate deployment in production |
+| `Jobs:MaxAttempts` / `Jobs:Concurrency` | see `appsettings.json` | Retries before a job is dead-lettered, and parallel jobs per worker. Failed jobs retry with exponential backoff; jobs are idempotent |
+| `Storage:Provider` | `Local` | `Local`, `S3` or `AzureBlob`. Provider settings live under `Storage:S3` and `Storage:AzureBlob` |
+| `Redis:ConnectionString` | *(empty)* | Optional. Enables the distributed cache, shared Data Protection keys and cluster-wide rate limits. Empty falls back to in-memory |
+| `AiLimits:*` | see `appsettings.json` | Max concurrent AI calls, queue length, timeouts and circuit-breaker thresholds for LLM/Voyage calls |
+| `RateLimiting:*` / `Quotas:*` | see `appsettings.json` | Per user/IP and per tenant request limits; per-tenant document and daily-upload quotas |
+| `ForwardedHeaders:KnownProxies` / `KnownNetworks` | *(empty)* | Addresses of the Next.js server(s) whose `X-Forwarded-For` is trusted, so rate limits see real client IPs. **Leave empty only if the API is not reachable by clients**; otherwise the header is spoofable |
+| `Serilog:*` / `OpenTelemetry:OtlpEndpoint` | console only | Structured logs (JSON in production) and OTLP export of traces, metrics and logs. `OTEL_EXPORTER_OTLP_ENDPOINT` also works |
+| `RowLevelSecurity:Enabled` | `false` | Sets `app.tenant_id` per connection for the optional Postgres RLS policies (see [docs/architecture.md](docs/architecture.md)) |
+
+Health: `GET /health/live` (process up) and `GET /health/ready` (database reachable). Every response carries `X-Correlation-Id`, which the Next.js server generates and the API forwards into logs, traces and background jobs.
+
+Operations: `DocuMind.Api --migrate` applies migrations and exits (use it as a one-off job). See [docs/deployment.md](docs/deployment.md) for Docker images, the compose `app` profile, the Bicep skeleton and staging notes.
 
 AI provider API keys are **not** configuration: each tenant pastes its own on the Settings page. Token lifetimes (30-minute access, 14-day refresh), password rules and lockout are set in `Program.cs`.
 
@@ -552,6 +565,7 @@ Every endpoint needs an `Authorization: Bearer <accessToken>` header and is scop
 | `POST` | `/api/auth/refresh` | *Public.* Exchange a refresh token for new tokens with the current company and role |
 | `GET` | `/api/auth/invitations/{token}` | *Public.* Preview an invitation (company, email, role) |
 | `POST` | `/api/auth/invitations/accept` | *Public.* Accept an invitation (`token`, `displayName`, `password`). Returns tokens |
+| `POST` | `/api/auth/logout` | Revokes the user's outstanding access tokens (rotates the security stamp) |
 | `GET` | `/api/auth/me` | The signed-in user, their company and role |
 | `GET` | `/api/team/members` | Members of the company |
 | `GET` | `/api/team/invitations` | **Admin.** Pending invitations |
@@ -565,7 +579,12 @@ Every endpoint needs an `Authorization: Bearer <accessToken>` header and is scop
 | `POST` | `/api/documents` | Upload a PDF (`multipart/form-data`: `file`, optional `title`). Returns `201` and queues processing |
 | `POST` | `/api/documents/{id}/reprocess` | Queue a document again. Returns `202`, or `409` if it is already queued |
 | `DELETE` | `/api/documents/{id}` | Delete the document, its chunks and its file |
-| `POST` | `/api/chat` | Ask a question. Body: `{ "messages": [{ "role": "user", "content": "…" }], "documentIds"?: [...] }`. Response: a `text/event-stream` |
+| `POST` | `/api/chat` | Ask a question. Body: `{ "messages": [{ "role": "user", "content": "…" }], "documentIds"?: [...], "conversationId"?: "…" }`. Response: a `text/event-stream` whose first event, `conversation`, carries the persisted conversation id |
+| `GET` | `/api/conversations` | The signed-in user's saved conversations |
+| `GET` | `/api/conversations/{id}` | One conversation with messages and sources |
+| `DELETE` | `/api/conversations/{id}` | Delete a conversation |
+| `GET` | `/api/activity` | **Admin.** Audit trail (`before`, `limit` for paging) |
+| `GET` | `/health/live`, `/health/ready` | *Public.* Liveness and readiness probes |
 | `GET` | `/api/settings/ai` | Providers, which are configured (with key hints), chosen models, and the provider that answers |
 | `PUT` | `/api/settings/ai/keys/{provider}` | **Admin.** Verify and save a key (`{ "apiKey": "…" }`). Returns the models the key can use. `provider` is `anthropic`, `openai`, `gemini` or `voyage` |
 | `GET` | `/api/settings/ai/keys/{provider}/models` | **Admin.** List the chat models the saved key can use |
@@ -585,6 +604,9 @@ Errors use the standard [Problem Details](https://www.rfc-editor.org/rfc/rfc9457
 | Add a migration | `dotnet ef migrations add <Name>` (in `src/Backend/DocuMind.Api`) |
 | Apply migrations | `dotnet ef database update` |
 | Lint the frontend | `npx eslint .` (in `src/frontend`) |
+| Backend tests | `dotnet test` (in `src/Backend`). Integration tests use Testcontainers (Postgres + pgvector) and are skipped when Docker is unavailable, unless `CI=true` |
+| Frontend tests | `npm test` (in `src/frontend`) |
+| Full stack in Docker | `docker compose --profile app up --build` |
 | Production build of the frontend | `npm run build` |
 | Inspect the database | `docker exec -it documind_db psql -U postgres -d documind` |
 
@@ -596,14 +618,15 @@ Branches: new work happens on feature branches (for example `feature/byok-api-ke
 
 - **Invitations aren't emailed:** the Admin copies the invitation link and sends it themselves. There is also no password reset or email verification for self sign-up yet; both need an email service.
 - **One company per account:** an email can belong to one company. Inviting an address that already has an account is refused.
-- **Sign-out is local:** signing out deletes the session cookie. A copy of the access token taken earlier would stay valid for up to 30 minutes, because bearer tokens can't be revoked (removed members are still locked out by the membership check).
-- **Brute-force protection is per account:** accounts lock after 5 failed attempts. There is no IP-based rate limiting, because all requests reach the API from the Next.js server's address.
+- **Sign-out revocation is eventually consistent:** `POST /api/auth/logout` rotates the user's security stamp, which invalidates their tokens, but each API instance caches membership for up to a minute (the local instance is cleared immediately). There are no refresh-token families or per-device sessions.
+- **Rate limiting depends on forwarded IPs:** configure `ForwardedHeaders:KnownProxies`/`KnownNetworks` for the Next.js server, otherwise limits fall back to the proxy's address (or trust a spoofable header). Limits are in-memory per instance unless Redis is configured; the Redis limiter fails open if Redis is down.
 - **Citation quality differs by provider:** Claude's citations come from the API and point at the exact chunk. OpenAI and Gemini rely on the model writing `[n]` markers, which they occasionally skip or misnumber.
 - **Scanned PDFs:** image-only PDFs contain no extractable text and are marked *Failed*. OCR is not supported yet.
-- **One API instance:** the in-memory processing queue doesn't survive across multiple instances; a message broker is needed to scale out.
-- **Chats aren't saved:** conversations disappear on page refresh, and only the latest question is used for retrieval.
-- **Formatting:** answers render as plain text, so Markdown formatting isn't shown as formatting yet.
-- **Local file storage:** fine for development; production needs cloud storage (S3 or Azure Blob).
+- **Unverified against real infrastructure:** the HNSW/GIN index migrations, hybrid search, Testcontainers integration tests, S3/Azure Blob storage, Redis features and the Bicep skeleton were written and compiled but not run against live pgvector, Docker, AWS, Azure or Redis in the environment where they were authored. CI runs the Postgres-backed tests; the rest need a staging environment.
+- **Index rebuild:** the `AddRetrievalIndexes` migration recreates the HNSW index, which blocks writes on large tables. Run it off-peak.
+- **Chat UI:** the API persists conversations and uses them for retrieval, but the frontend only continues the current thread; there is no conversation list or history page yet. Answers render as plain text.
+- **Audits still use vector-only retrieval:** only chat uses hybrid search.
+- **Row-level security is optional and manual:** apply the SQL script yourself and run the app as a non-owner role; it is off by default.
 
 ---
 
@@ -616,8 +639,9 @@ Branches: new work happens on feature branches (for example `feature/byok-api-ke
 - [x] Bring your own key: per-tenant encrypted keys for Claude, OpenAI, Gemini and Voyage AI
 - [x] Sign-in and companies: email and password accounts, Admin and Member roles, invitation links, Team page
 - [ ] **Compliance and risk audits:** run configurable checklists (for example "has an indemnity clause", "termination notice ≥ 60 days") against each document with Claude and store the findings
+- [x] **Scalability roadmap:** durable Postgres job queue with retries and dead-lettering, separate worker mode, S3/Azure Blob storage, optional Redis, HNSW + full-text hybrid retrieval, rate limits and quotas, circuit breakers, token revocation, OpenTelemetry/Serilog, health probes, tests and CI, Dockerfiles, migration job, Bicep skeleton, persisted chat history (API), activity log, optional RLS
+- [ ] Chat history UI (conversation list), Markdown rendering
 - [ ] Email delivery for invitations, password reset and email verification; optional Google and Microsoft sign-in
-- [ ] Saved chat history and Markdown rendering
 - [ ] OCR for scanned PDFs
-- [ ] Cloud file storage and a durable job queue
-- [ ] Tests, CI/CD, containerized deployment and observability
+- [ ] Hybrid retrieval for audits; per-tenant embedding-cost metering
+- [ ] Validate the Azure/AWS infrastructure and load-test in a staging environment

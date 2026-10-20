@@ -18,7 +18,8 @@ public class TeamController(
     ApplicationDbContext db,
     UserManager<ApplicationUser> userManager,
     ITenantProvider tenantProvider,
-    IMemoryCache cache) : ControllerBase
+    IMemoryCache cache,
+    DocuMind.Api.Activity.IActivityLog activity) : ControllerBase
 {
     [HttpGet("members")]
     public async Task<ActionResult<IEnumerable<TeamMember>>> GetMembers(CancellationToken cancellationToken) =>
@@ -71,6 +72,7 @@ public class TeamController(
         };
         db.TenantInvitations.Add(invitation);
         await db.SaveChangesAsync(cancellationToken);
+        await activity.RecordAsync("team.invite", "Invitation", invitation.Id, $"{invitation.Email} as {invitation.Role}", cancellationToken);
 
         return new CreatedInvitation(
             new PendingInvitation(invitation.Id, invitation.Email, invitation.Role.ToString(), invitation.CreatedAt, invitation.ExpiresAt),
@@ -104,6 +106,7 @@ public class TeamController(
         membership.Role = role;
         await db.SaveChangesAsync(cancellationToken);
         cache.Remove(TenantClaims.MembershipCacheKey(userId, tenantProvider.TenantId));
+        await activity.RecordAsync("team.role_change", "User", userId, role.ToString(), cancellationToken);
         return NoContent();
     }
 
@@ -132,6 +135,11 @@ public class TeamController(
         // Deleting the user also deletes the membership (cascade) and invalidates their refresh token
         var deleted = await userManager.DeleteAsync(membership.User);
         cache.Remove(TenantClaims.MembershipCacheKey(userId, tenantProvider.TenantId));
+        if (deleted.Succeeded)
+        {
+            await activity.RecordAsync("team.remove_member", "User", userId, membership.User.Email, cancellationToken);
+        }
+
         return deleted.Succeeded
             ? NoContent()
             : Problem(string.Join(" ", deleted.Errors.Select(e => e.Description)), statusCode: StatusCodes.Status400BadRequest);

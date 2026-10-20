@@ -10,3 +10,6 @@ public record CitationStreamEvent(int SourceIndex, string CitedText) : ChatStrea
 
 // StopReason uses Claude's vocabulary for every provider: end_turn, max_tokens, refusal, no_results
 public record DoneStreamEvent(string? StopReason) : ChatStreamEvent;
+
+// Sent first so the client learns the id of the (possibly new) persisted conversation
+public record ConversationStreamEvent(Guid ConversationId) : ChatStreamEvent;

@@ -19,7 +19,8 @@ public class AiSettingsController(
     ApiKeyValidator validator,
     ITenantProvider tenantProvider,
     IOptions<ClaudeOptions> claudeOptions,
-    IOptions<VoyageOptions> voyageOptions) : ControllerBase
+    IOptions<VoyageOptions> voyageOptions,
+    DocuMind.Api.Activity.IActivityLog activity) : ControllerBase
 {
     private Guid TenantId => tenantProvider.TenantId;
 
@@ -61,6 +62,7 @@ public class AiSettingsController(
         var model = existing?.Model is { } previous && check.Models.Contains(previous) ? previous : DefaultModel(aiProvider, check.Models);
 
         var entry = await keys.SaveKeyAsync(TenantId, aiProvider, apiKey, model, cancellationToken);
+        await activity.RecordAsync("settings.api_key_saved", "ApiKey", provider, null, cancellationToken);
 
         // The first chat key saved becomes the provider that answers questions
         var settings = await keys.GetSettingsAsync(TenantId, cancellationToken);
@@ -174,6 +176,7 @@ public class AiSettingsController(
         }
 
         await keys.DeleteAsync(TenantId, aiProvider, cancellationToken);
+        await activity.RecordAsync("settings.api_key_deleted", "ApiKey", provider, null, cancellationToken);
         return NoContent();
     }
 

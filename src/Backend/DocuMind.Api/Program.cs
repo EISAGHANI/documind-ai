@@ -26,8 +26,15 @@ const string FrontendCorsPolicy = "Frontend";
 
 // 1. Register DbContext with PostgreSQL + pgvector
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+builder.Services.Configure<RowLevelSecurityOptions>(builder.Configuration.GetSection("RowLevelSecurity"));
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseNpgsql(connectionString, npgsql => npgsql.UseVector()));
+{
+    options.UseNpgsql(connectionString, npgsql => npgsql.UseVector());
+    if (builder.Configuration.GetValue<bool>("RowLevelSecurity:Enabled"))
+    {
+        options.AddInterceptors(new TenantRlsConnectionInterceptor());
+    }
+});
 
 // 2. Sign-in with ASP.NET Core Identity. Tokens are Identity's bearer tokens (protected with Data
 // Protection, see section 5); the company and role are claims added by TenantClaimsPrincipalFactory.
@@ -115,6 +122,7 @@ builder.Services.AddHttpClient<IEmbeddingService, VoyageEmbeddingService>((servi
     });
 builder.Services.Configure<JobOptions>(builder.Configuration.GetSection(JobOptions.SectionName));
 builder.Services.AddScoped<IJobQueue, JobQueue>();
+builder.Services.AddScoped<DocuMind.Api.Activity.IActivityLog, DocuMind.Api.Activity.ActivityLogWriter>();
 builder.Services.AddScoped<IDocumentProcessingQueue, DocumentProcessingQueue>();
 builder.Services.AddScoped<DocumentProcessor>();
 builder.Services.AddScoped<IJobHandler, DocumentProcessingJobHandler>();

@@ -21,7 +21,8 @@ public class AuditsController(
     ITenantProvider tenantProvider,
     UserManager<ApplicationUser> userManager,
     IAuditQueue queue,
-    IOptions<AuditOptions> options) : ControllerBase
+    IOptions<AuditOptions> options,
+    DocuMind.Api.Activity.IActivityLog activity) : ControllerBase
 {
     // --- Checklists
 
@@ -205,6 +206,7 @@ public class AuditsController(
         db.AuditRuns.Add(run);
         await db.SaveChangesAsync(cancellationToken);
         await queue.EnqueueAsync(run.Id, cancellationToken);
+        await activity.RecordAsync("audit.run_start", "AuditRun", run.Id, checklist.Name, cancellationToken);
 
         var summary = await db.AuditRuns.AsNoTracking().Where(r => r.Id == run.Id).Select(SummaryProjection).FirstAsync(cancellationToken);
         return AcceptedAtAction(nameof(GetRun), new { id = run.Id }, summary);
