@@ -8,6 +8,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="DocuMind.Api.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Anthropic" Version="12.58.0" />
     <PackageReference Include="AWSSDK.S3" Version="4.0.104.5" />
     <PackageReference Include="Azure.Identity" Version="1.21.0" />
