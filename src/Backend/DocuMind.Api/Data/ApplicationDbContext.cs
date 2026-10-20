@@ -50,6 +50,7 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, IdentityR
             entity.Property(e => e.Status).HasConversion<string>().HasMaxLength(20);
             entity.Property(e => e.ProcessingError).HasMaxLength(1000);
             entity.HasIndex(e => e.TenantId);
+            entity.HasIndex(e => new { e.TenantId, e.Status, e.UploadedAt });
             entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
         });
 
@@ -64,11 +65,18 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, IdentityR
                 .OnDelete(DeleteBehavior.Cascade);
             entity.HasIndex(e => new { e.DocumentId, e.ChunkIndex }).IsUnique();
             entity.HasIndex(e => e.TenantId);
+            entity.HasIndex(e => new { e.TenantId, e.DocumentId });
+
+            entity.HasGeneratedTsVectorColumn(e => e.SearchVector, DocumentChunk.TextSearchConfig, e => e.Content)
+                .HasIndex(e => e.SearchVector)
+                .HasMethod("GIN");
 
             // HNSW index for fast cosine-similarity search
             entity.HasIndex(e => e.Embedding)
                 .HasMethod("hnsw")
-                .HasOperators("vector_cosine_ops");
+                .HasOperators("vector_cosine_ops")
+                .HasStorageParameter("m", 16)
+                .HasStorageParameter("ef_construction", 64);
 
             entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
         });

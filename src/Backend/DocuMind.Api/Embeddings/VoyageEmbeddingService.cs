@@ -17,13 +17,16 @@ public class VoyageEmbeddingService(HttpClient httpClient, IOptions<VoyageOption
         EmbeddingInputType inputType,
         CancellationToken cancellationToken = default)
     {
-        var embeddings = new List<float[]>(inputs.Count);
-        foreach (var batch in inputs.Chunk(_options.BatchSize))
-        {
-            embeddings.AddRange(await EmbedBatchAsync(apiKey, batch, inputType, cancellationToken));
-        }
+        var batches = inputs.Chunk(_options.BatchSize).ToArray();
+        var results = new float[batches.Length][][];
 
-        return embeddings;
+        // Batches are independent, so embed a few at a time instead of strictly one after another
+        await Parallel.ForEachAsync(
+            Enumerable.Range(0, batches.Length),
+            new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, _options.MaxParallelBatches), CancellationToken = cancellationToken },
+            async (i, ct) => results[i] = await EmbedBatchAsync(apiKey, batches[i], inputType, ct));
+
+        return results.SelectMany(r => r).ToList();
     }
 
     private async Task<float[][]> EmbedBatchAsync(
