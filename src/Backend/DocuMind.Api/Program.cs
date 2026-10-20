@@ -191,6 +191,19 @@ builder.Services.AddOpenApi();
 
 var app = builder.Build();
 
+// `DocuMind.Api --migrate` applies pending EF migrations and exits. Run it as a one-off job
+// (see the `migrate` service in docker-compose.yml) so API and worker replicas never race to migrate.
+if (args.Contains("--migrate"))
+{
+    await using var scope = app.Services.CreateAsyncScope();
+    var migrationDb = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+    var pending = (await migrationDb.Database.GetPendingMigrationsAsync()).ToList();
+    app.Logger.LogInformation("Applying {Count} pending migration(s): {Migrations}", pending.Count, string.Join(", ", pending));
+    await migrationDb.Database.MigrateAsync();
+    app.Logger.LogInformation("Database is up to date");
+    return;
+}
+
 // 9. Enable OpenAPI endpoint and Scalar UI in Development
 if (app.Environment.IsDevelopment())
 {
