@@ -4,6 +4,8 @@ using DocuMind.Api.Chat;
 using DocuMind.Api.Data;
 using DocuMind.Api.Embeddings;
 using DocuMind.Api.Entities;
+using DocuMind.Api.Jobs;
+using DocuMind.Api.Observability;
 using DocuMind.Api.Processing;
 using DocuMind.Api.Storage;
 using DocuMind.Api.Tenancy;
@@ -56,9 +58,43 @@ builder.Services.AddMemoryCache();
 // 3. Tenancy and file storage
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ITenantProvider, ClaimsTenantProvider>();
-builder.Services.AddSingleton<IFileStorage, LocalFileStorage>();
+builder.Services.AddScoped<ICorrelationIdAccessor, HttpCorrelationIdAccessor>();
 
-// 4. Document processing: Voyage embeddings + background worker
+// Files: Storage:Provider = Local (default, dev) | S3 | AzureBlob. Use S3/AzureBlob with more than one instance.
+switch (builder.Configuration["Storage:Provider"]?.ToLowerInvariant())
+{
+    case "s3":
+        builder.Services.Configure<S3StorageOptions>(builder.Configuration.GetSection("Storage:S3"));
+        builder.Services.AddSingleton<IFileStorage, S3FileStorage>();
+        break;
+    case "azureblob":
+        builder.Services.Configure<AzureBlobStorageOptions>(builder.Configuration.GetSection("Storage:AzureBlob"));
+        builder.Services.AddSingleton<IFileStorage, AzureBlobFileStorage>();
+        break;
+    default:
+        builder.Services.AddSingleton<IFileStorage, LocalFileStorage>();
+        break;
+}
+
+// Shared state: Redis:ConnectionString enables a distributed cache and shared Data Protection keys.
+// Without it everything stays in memory, which is fine for a single instance.
+var redisConnection = builder.Configuration["Redis:ConnectionString"];
+if (!string.IsNullOrWhiteSpace(redisConnection))
+{
+    builder.Services.AddSingleton<StackExchange.Redis.IConnectionMultiplexer>(
+        _ => StackExchange.Redis.ConnectionMultiplexer.Connect(redisConnection));
+    builder.Services.AddStackExchangeRedisCache(o =>
+    {
+        o.Configuration = redisConnection;
+        o.InstanceName = "documind:";
+    });
+}
+else
+{
+    builder.Services.AddDistributedMemoryCache();
+}
+
+// 4. Document processing: Voyage embeddings + durable background jobs
 builder.Services.Configure<VoyageOptions>(builder.Configuration.GetSection(VoyageOptions.SectionName));
 builder.Services.AddHttpClient<IEmbeddingService, VoyageEmbeddingService>((services, client) =>
     {
@@ -74,15 +110,27 @@ builder.Services.AddHttpClient<IEmbeddingService, VoyageEmbeddingService>((servi
         resilience.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(120);
         resilience.TotalRequestTimeout.Timeout = TimeSpan.FromMinutes(5);
     });
-builder.Services.AddSingleton<IDocumentProcessingQueue, DocumentProcessingQueue>();
+builder.Services.Configure<JobOptions>(builder.Configuration.GetSection(JobOptions.SectionName));
+builder.Services.AddScoped<IJobQueue, JobQueue>();
+builder.Services.AddScoped<IDocumentProcessingQueue, DocumentProcessingQueue>();
 builder.Services.AddScoped<DocumentProcessor>();
-builder.Services.AddHostedService<DocumentProcessingWorker>();
+builder.Services.AddScoped<IJobHandler, DocumentProcessingJobHandler>();
+var jobOptions = builder.Configuration.GetSection(JobOptions.SectionName).Get<JobOptions>() ?? new JobOptions();
+if (jobOptions.RunsWorker)
+{
+    builder.Services.AddHostedService<JobWorker>();
+}
 
 // 5. Bring-your-own-key: tenants' AI provider keys, encrypted with Data Protection.
 // Set DataProtection:KeysPath in production so the encryption keys survive restarts and are shared
 // between instances; without it saved API keys become unreadable when the key ring is lost.
 var dataProtection = builder.Services.AddDataProtection().SetApplicationName("DocuMind");
-if (builder.Configuration["DataProtection:KeysPath"] is { Length: > 0 } keysPath)
+if (!string.IsNullOrWhiteSpace(redisConnection))
+{
+    dataProtection.PersistKeysToStackExchangeRedis(
+        () => StackExchange.Redis.ConnectionMultiplexer.Connect(redisConnection).GetDatabase(), "documind:dataprotection-keys");
+}
+else if (builder.Configuration["DataProtection:KeysPath"] is { Length: > 0 } keysPath)
 {
     dataProtection.PersistKeysToFileSystem(new DirectoryInfo(keysPath));
 }
@@ -99,10 +147,9 @@ builder.Services.AddScoped<ChatService>();
 
 // Compliance audits: checklists evaluated in the background with the tenant's chosen model
 builder.Services.Configure<AuditOptions>(builder.Configuration.GetSection(AuditOptions.SectionName));
-builder.Services.AddSingleton<AuditQueue>();
-builder.Services.AddSingleton<IAuditQueue>(services => services.GetRequiredService<AuditQueue>());
+builder.Services.AddScoped<IAuditQueue, AuditQueue>();
 builder.Services.AddScoped<AuditRunner>();
-builder.Services.AddHostedService<AuditWorker>();
+builder.Services.AddScoped<IJobHandler, AuditJobHandler>();
 
 // 7. Allow the Next.js frontend to call the API
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
@@ -129,10 +176,17 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseCors(FrontendCorsPolicy);
 app.UseAuthentication();
 app.UseMiddleware<MembershipValidationMiddleware>();
 app.UseAuthorization();
-app.MapControllers();
+if (jobOptions.RunsApi)
+{
+    app.MapControllers();
+}
 
 app.Run();
+
+// Lets integration tests use WebApplicationFactory<Program>
+public partial class Program;

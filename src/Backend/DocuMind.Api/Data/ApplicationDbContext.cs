@@ -1,4 +1,5 @@
 using DocuMind.Api.Entities;
+using DocuMind.Api.Jobs;
 using DocuMind.Api.Tenancy;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
@@ -28,6 +29,7 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, IdentityR
     public DbSet<AuditCheck> AuditChecks => Set<AuditCheck>();
     public DbSet<AuditRun> AuditRuns => Set<AuditRun>();
     public DbSet<AuditFinding> AuditFindings => Set<AuditFinding>();
+    public DbSet<Job> Jobs => Set<Job>();
 
     // Read on every query, so each request only sees rows for its own tenant
     private Guid CurrentTenantId => _tenantProvider.TenantId;
@@ -162,6 +164,22 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, IdentityR
             entity.HasIndex(e => new { e.TenantId, e.CreatedAt });
             entity.HasIndex(e => e.DocumentId);
             entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        });
+
+        modelBuilder.Entity<Job>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Type).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.Status).HasConversion<string>().HasMaxLength(20);
+            entity.Property(e => e.LockedBy).HasMaxLength(200);
+            entity.Property(e => e.LastError).HasMaxLength(2000);
+            entity.Property(e => e.CorrelationId).HasMaxLength(64);
+
+            // Polling index, and idempotent enqueue: at most one active job per type + entity
+            entity.HasIndex(e => new { e.Status, e.RunAfter });
+            entity.HasIndex(e => new { e.Type, e.EntityId })
+                .IsUnique()
+                .HasFilter("\"Status\" IN ('Pending', 'Running')");
         });
 
         modelBuilder.Entity<AuditFinding>(entity =>

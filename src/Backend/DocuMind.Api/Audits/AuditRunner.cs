@@ -60,7 +60,7 @@ public partial class AuditRunner(
 
     private readonly AuditOptions _options = options.Value;
 
-    public async Task RunAsync(Guid runId, CancellationToken cancellationToken)
+    public async Task RunAsync(Guid runId, CancellationToken cancellationToken, DocuMind.Api.Jobs.JobContext? job = null)
     {
         var run = await db.AuditRuns.IgnoreQueryFilters()
             .Include(r => r.Document)
@@ -84,8 +84,14 @@ public partial class AuditRunner(
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
-            logger.LogError(ex, "Audit run {RunId} failed", runId);
             db.ChangeTracker.Clear();
+            if (job is { IsFinalAttempt: false } && DocuMind.Api.Jobs.TransientErrors.IsTransient(ex))
+            {
+                logger.LogWarning(ex, "Transient failure in audit run {RunId}, will retry", runId);
+                throw;
+            }
+
+            logger.LogError(ex, "Audit run {RunId} failed", runId);
             var message = ex is MissingApiKeyException or ModelOutputException
                 ? ex.Message
                 : "The audit could not be completed. Check the AI keys in Settings and try again.";
