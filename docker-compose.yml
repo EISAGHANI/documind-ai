@@ -18,5 +18,82 @@ services:
       timeout: 5s
       retries: 10
 
+  # The services below are optional: `docker compose --profile app up --build`.
+  # For local development you can keep running only `db` and start the API/frontend from source.
+  redis:
+    profiles: ["app"]
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    # One-off job: applies EF migrations and exits. API and worker wait for it to finish.
+    profiles: ["app"]
+    build:
+      context: ./src/Backend
+      dockerfile: DocuMind.Api/Dockerfile
+    command: ["--migrate"]
+    environment: &api-env
+      ConnectionStrings__DefaultConnection: Host=db;Port=5432;Database=${POSTGRES_DB:-documind};Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD}
+      Redis__ConnectionString: redis:6379
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    profiles: ["app"]
+    build:
+      context: ./src/Backend
+      dockerfile: DocuMind.Api/Dockerfile
+    environment:
+      <<: *api-env
+      Jobs__Mode: Api
+    ports:
+      - "5288:8080"
+    volumes:
+      - documind_uploads:/data/uploads
+      - documind_keys:/data/keys
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  worker:
+    # Same image as the API, running only the background job workers; scale with --scale worker=N
+    profiles: ["app"]
+    build:
+      context: ./src/Backend
+      dockerfile: DocuMind.Api/Dockerfile
+    environment:
+      <<: *api-env
+      Jobs__Mode: Worker
+    volumes:
+      - documind_uploads:/data/uploads
+      - documind_keys:/data/keys
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  frontend:
+    profiles: ["app"]
+    build:
+      context: ./src/frontend
+    environment:
+      DOCUMIND_API_URL: http://api:8080
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env (openssl rand -base64 48)}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
 volumes:
+  documind_uploads:
+  documind_keys:
   documind_data:

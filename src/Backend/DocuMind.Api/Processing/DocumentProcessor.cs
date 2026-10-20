@@ -2,6 +2,7 @@ using DocuMind.Api.ApiKeys;
 using DocuMind.Api.Data;
 using DocuMind.Api.Embeddings;
 using DocuMind.Api.Entities;
+using DocuMind.Api.Jobs;
 using DocuMind.Api.Storage;
 using Microsoft.EntityFrameworkCore;
 using Pgvector;
@@ -20,7 +21,9 @@ public class DocumentProcessor(
 {
     private const int MaxErrorLength = 1000;
 
-    public async Task ProcessAsync(Guid documentId, CancellationToken cancellationToken)
+    // Idempotent: reprocessing replaces the document's chunks atomically. Transient failures are rethrown
+    // (until the final attempt) so the job queue retries with backoff.
+    public async Task ProcessAsync(Guid documentId, CancellationToken cancellationToken, JobContext? job = null)
     {
         var document = await db.Documents
             .IgnoreQueryFilters()
@@ -57,6 +60,15 @@ public class DocumentProcessor(
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
+            if (job is { IsFinalAttempt: false } && TransientErrors.IsTransient(ex))
+            {
+                logger.LogWarning(ex, "Transient failure processing document {DocumentId}, will retry", documentId);
+                db.ChangeTracker.Clear();
+                await db.Documents.IgnoreQueryFilters().Where(d => d.Id == documentId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(d => d.Status, DocumentStatus.Pending), CancellationToken.None);
+                throw;
+            }
+
             logger.LogError(ex, "Processing failed for document {DocumentId}", documentId);
             await MarkFailedAsync(documentId, ex.Message);
         }

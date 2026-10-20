@@ -5,6 +5,8 @@ using Anthropic.Exceptions;
 using DocuMind.Api.ApiKeys;
 using DocuMind.Api.Chat;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
+using DocuMind.Api.Resilience;
 
 namespace DocuMind.Api.Controllers;
 
@@ -16,6 +18,7 @@ public class ChatController(ChatService chat, ILogger<ChatController> logger) : 
 
     // Streams the answer as server-sent events: sources, block (a new text span starts), text, citation, done, error
     [HttpPost]
+    [EnableRateLimiting(RateLimitPolicies.Expensive)]
     public async Task Post(ChatRequest request, CancellationToken cancellationToken)
     {
         if (request.Messages[^1].Role != "user")
@@ -38,6 +41,9 @@ public class ChatController(ChatService chat, ILogger<ChatController> logger) : 
                 {
                     case SourcesStreamEvent sources:
                         await WriteEventAsync("sources", sources.Sources, cancellationToken);
+                        break;
+                    case ConversationStreamEvent conversation:
+                        await WriteEventAsync("conversation", new ChatConversationEvent(conversation.ConversationId), cancellationToken);
                         break;
                     case BlockStartStreamEvent:
                         await WriteEventAsync("block", new { }, cancellationToken);
@@ -87,6 +93,9 @@ public class ChatController(ChatService chat, ILogger<ChatController> logger) : 
             "The AI provider is temporarily unavailable. Please try again shortly.",
         ClientResultException { Status: 404 } =>
             "The model chosen in Settings isn't available for this API key. Pick another model.",
+        Polly.CircuitBreaker.BrokenCircuitException =>
+            "The AI provider is currently unavailable. Please try again in a minute.",
+        TimeoutException => "The AI provider took too long to respond. Please try again.",
         HttpRequestException => "Could not reach an AI service. Please try again.",
         InvalidOperationException => ex.Message,
         _ => "Something went wrong while answering. Please try again.",

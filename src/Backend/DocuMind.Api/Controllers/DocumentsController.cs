@@ -5,7 +5,10 @@ using DocuMind.Api.Processing;
 using DocuMind.Api.Storage;
 using DocuMind.Api.Tenancy;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using DocuMind.Api.Resilience;
 
 namespace DocuMind.Api.Controllers;
 
@@ -15,7 +18,9 @@ public class DocumentsController(
     ApplicationDbContext db,
     IFileStorage storage,
     ITenantProvider tenantProvider,
-    IDocumentProcessingQueue processingQueue) : ControllerBase
+    IOptions<QuotaOptions> quotaOptions,
+    IDocumentProcessingQueue processingQueue,
+    DocuMind.Api.Activity.IActivityLog activity) : ControllerBase
 {
     private const long MaxFileSizeBytes = 50 * 1024 * 1024;
     private static readonly byte[] PdfSignature = "%PDF-"u8.ToArray();
@@ -51,7 +56,29 @@ public class DocumentsController(
         return stream is null ? NotFound() : File(stream, document.ContentType, document.FileName);
     }
 
+    private async Task<string?> QuotaExceededAsync(CancellationToken cancellationToken)
+    {
+        var quotas = quotaOptions.Value;
+        if (quotas.MaxDocumentsPerTenant > 0
+            && await db.Documents.CountAsync(cancellationToken) >= quotas.MaxDocumentsPerTenant)
+        {
+            return $"Your company has reached its limit of {quotas.MaxDocumentsPerTenant} documents. Delete some to upload more.";
+        }
+
+        if (quotas.MaxUploadsPerTenantPerDay > 0)
+        {
+            var since = DateTimeOffset.UtcNow.AddDays(-1);
+            if (await db.Documents.CountAsync(d => d.UploadedAt >= since, cancellationToken) >= quotas.MaxUploadsPerTenantPerDay)
+            {
+                return $"Your company has reached its daily limit of {quotas.MaxUploadsPerTenantPerDay} uploads. Try again tomorrow.";
+            }
+        }
+
+        return null;
+    }
+
     [HttpPost]
+    [EnableRateLimiting(RateLimitPolicies.Expensive)]
     [Consumes("multipart/form-data")]
     [RequestSizeLimit(MaxFileSizeBytes + 1024 * 1024)]
     [RequestFormLimits(MultipartBodyLengthLimit = MaxFileSizeBytes + 1024 * 1024)]
@@ -78,6 +105,11 @@ public class DocumentsController(
         }
 
         var tenantId = tenantProvider.TenantId;
+        if (await QuotaExceededAsync(cancellationToken) is { } quotaMessage)
+        {
+            return Problem(quotaMessage, statusCode: StatusCodes.Status429TooManyRequests);
+        }
+
         var fileName = Path.GetFileName(file.FileName);
         var document = new Document
         {
@@ -107,6 +139,7 @@ public class DocumentsController(
         }
 
         await processingQueue.EnqueueAsync(document.Id, cancellationToken);
+        await activity.RecordAsync("document.upload", "Document", document.Id, document.FileName, cancellationToken);
 
         return CreatedAtAction(nameof(GetById), new { id = document.Id }, DocumentResponse.FromEntity(document));
     }
@@ -130,6 +163,7 @@ public class DocumentsController(
         document.ProcessingError = null;
         await db.SaveChangesAsync(cancellationToken);
         await processingQueue.EnqueueAsync(document.Id, cancellationToken);
+        await activity.RecordAsync("document.reprocess", "Document", document.Id, null, cancellationToken);
 
         return Accepted(DocumentResponse.FromEntity(document));
     }
@@ -146,6 +180,7 @@ public class DocumentsController(
         db.Documents.Remove(document);
         await db.SaveChangesAsync(cancellationToken);
         await storage.DeleteAsync(document.StoragePath, cancellationToken);
+        await activity.RecordAsync("document.delete", "Document", document.Id, document.FileName, cancellationToken);
 
         return NoContent();
     }

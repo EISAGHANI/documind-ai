@@ -12,4 +12,7 @@ public class VoyageOptions
 
     // Voyage allows 1,000 inputs and 320K tokens per request for voyage-4; 128 chunks stays well under both
     public int BatchSize { get; set; } = 128;
+
+    // Batches embedded concurrently per call; keep small to stay under the tenant's Voyage rate limit
+    public int MaxParallelBatches { get; set; } = 3;
 }

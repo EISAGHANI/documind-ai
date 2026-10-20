@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 
 namespace DocuMind.Api.Controllers;
@@ -90,6 +91,23 @@ public class AuthController(
         }
 
         return await SignInAsync(user);
+    }
+
+    // Revokes the caller's sessions: rotating the security stamp invalidates every refresh token and,
+    // on the next membership check (within a minute, immediately on this instance), every access token.
+    [HttpPost("logout")]
+    public async Task<IActionResult> Logout(IMemoryCache cache)
+    {
+        if (await userManager.GetUserAsync(User) is { } user)
+        {
+            await userManager.UpdateSecurityStampAsync(user);
+            if (Guid.TryParse(User.FindFirst(TenantClaims.TenantId)?.Value, out var tenantId))
+            {
+                cache.Remove(TenantClaims.MembershipCacheKey(user.Id, tenantId));
+            }
+        }
+
+        return NoContent();
     }
 
     [HttpGet("me")]
