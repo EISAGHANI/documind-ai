@@ -6,6 +6,7 @@ using DocuMind.Api.Tenancy;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -168,6 +169,7 @@ public class AuditsController(
     }
 
     [HttpPost("runs")]
+    [EnableRateLimiting(DocuMind.Api.Resilience.RateLimitPolicies.Expensive)]
     public async Task<ActionResult<AuditRunSummary>> StartRun(StartAuditRequest request, CancellationToken cancellationToken)
     {
         var document = await db.Documents.AsNoTracking().FirstOrDefaultAsync(d => d.Id == request.DocumentId, cancellationToken);

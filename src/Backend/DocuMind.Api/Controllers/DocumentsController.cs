@@ -5,7 +5,10 @@ using DocuMind.Api.Processing;
 using DocuMind.Api.Storage;
 using DocuMind.Api.Tenancy;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using DocuMind.Api.Resilience;
 
 namespace DocuMind.Api.Controllers;
 
@@ -15,6 +18,7 @@ public class DocumentsController(
     ApplicationDbContext db,
     IFileStorage storage,
     ITenantProvider tenantProvider,
+    IOptions<QuotaOptions> quotaOptions,
     IDocumentProcessingQueue processingQueue) : ControllerBase
 {
     private const long MaxFileSizeBytes = 50 * 1024 * 1024;
@@ -51,7 +55,29 @@ public class DocumentsController(
         return stream is null ? NotFound() : File(stream, document.ContentType, document.FileName);
     }
 
+    private async Task<string?> QuotaExceededAsync(CancellationToken cancellationToken)
+    {
+        var quotas = quotaOptions.Value;
+        if (quotas.MaxDocumentsPerTenant > 0
+            && await db.Documents.CountAsync(cancellationToken) >= quotas.MaxDocumentsPerTenant)
+        {
+            return $"Your company has reached its limit of {quotas.MaxDocumentsPerTenant} documents. Delete some to upload more.";
+        }
+
+        if (quotas.MaxUploadsPerTenantPerDay > 0)
+        {
+            var since = DateTimeOffset.UtcNow.AddDays(-1);
+            if (await db.Documents.CountAsync(d => d.UploadedAt >= since, cancellationToken) >= quotas.MaxUploadsPerTenantPerDay)
+            {
+                return $"Your company has reached its daily limit of {quotas.MaxUploadsPerTenantPerDay} uploads. Try again tomorrow.";
+            }
+        }
+
+        return null;
+    }
+
     [HttpPost]
+    [EnableRateLimiting(RateLimitPolicies.Expensive)]
     [Consumes("multipart/form-data")]
     [RequestSizeLimit(MaxFileSizeBytes + 1024 * 1024)]
     [RequestFormLimits(MultipartBodyLengthLimit = MaxFileSizeBytes + 1024 * 1024)]
@@ -78,6 +104,11 @@ public class DocumentsController(
         }
 
         var tenantId = tenantProvider.TenantId;
+        if (await QuotaExceededAsync(cancellationToken) is { } quotaMessage)
+        {
+            return Problem(quotaMessage, statusCode: StatusCodes.Status429TooManyRequests);
+        }
+
         var fileName = Path.GetFileName(file.FileName);
         var document = new Document
         {

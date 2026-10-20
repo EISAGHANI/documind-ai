@@ -14,6 +14,8 @@ public class MembershipValidationMiddleware(RequestDelegate next, IMemoryCache c
 {
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(1);
 
+    private record MembershipState(string? Role, string? SecurityStamp);
+
     public async Task InvokeAsync(HttpContext context, ApplicationDbContext db, IOptions<IdentityOptions> identityOptions)
     {
         var user = context.User;
@@ -24,17 +26,25 @@ public class MembershipValidationMiddleware(RequestDelegate next, IMemoryCache c
             && Guid.TryParse(userIdClaim, out var userId)
             && Guid.TryParse(tenantIdClaim, out var tenantId))
         {
-            var role = await cache.GetOrCreateAsync(TenantClaims.MembershipCacheKey(userId, tenantId), async entry =>
+            var state = await cache.GetOrCreateAsync(TenantClaims.MembershipCacheKey(userId, tenantId), async entry =>
             {
                 entry.AbsoluteExpirationRelativeToNow = CacheDuration;
-                return await db.TenantMemberships
+                var role = await db.TenantMemberships
                     .IgnoreQueryFilters()
                     .Where(m => m.UserId == userId && m.TenantId == tenantId)
                     .Select(m => (string?)m.Role.ToString())
                     .FirstOrDefaultAsync(context.RequestAborted);
+                var stamp = await db.Users
+                    .Where(u => u.Id == userId)
+                    .Select(u => u.SecurityStamp)
+                    .FirstOrDefaultAsync(context.RequestAborted);
+                return new MembershipState(role, stamp);
             });
+            var role = state?.Role;
 
-            if (role is null)
+            // Logging out (or changing the password) rotates the security stamp, which revokes access tokens issued before it
+            var tokenStamp = user.FindFirst(identityOptions.Value.ClaimsIdentity.SecurityStampClaimType)?.Value;
+            if (role is null || (tokenStamp is not null && state!.SecurityStamp != tokenStamp))
             {
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;
                 return;

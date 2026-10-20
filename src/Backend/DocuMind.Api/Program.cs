@@ -7,8 +7,10 @@ using DocuMind.Api.Entities;
 using DocuMind.Api.Jobs;
 using DocuMind.Api.Observability;
 using DocuMind.Api.Processing;
+using DocuMind.Api.Resilience;
 using DocuMind.Api.Storage;
 using DocuMind.Api.Tenancy;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Authentication.BearerToken;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
@@ -157,6 +159,29 @@ builder.Services.AddCors(options =>
     options.AddPolicy(FrontendCorsPolicy, policy =>
         policy.WithOrigins(allowedOrigins).AllowAnyHeader().AllowAnyMethod()));
 
+// Limits on concurrent/slow AI calls, per-tenant request rate limits and quotas
+builder.Services.Configure<AiLimitsOptions>(builder.Configuration.GetSection("AiLimits"));
+builder.Services.AddSingleton<AiConcurrencyGate>();
+builder.Services.AddSingleton<AiCircuitBreakers>();
+builder.Services.AddDocuMindRateLimiting(builder.Configuration);
+
+// Behind Next.js or a load balancer the real client IP arrives in X-Forwarded-For
+builder.Services.Configure<ForwardedHeadersOptions>(o =>
+{
+    o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    o.KnownIPNetworks.Clear();
+    o.KnownProxies.Clear();
+    foreach (var proxy in builder.Configuration.GetSection("ForwardedHeaders:KnownProxies").Get<string[]>() ?? [])
+    {
+        o.KnownProxies.Add(System.Net.IPAddress.Parse(proxy));
+    }
+    foreach (var network in builder.Configuration.GetSection("ForwardedHeaders:KnownNetworks").Get<string[]>() ?? [])
+    {
+        var parts = network.Split('/');
+        o.KnownIPNetworks.Add(new System.Net.IPNetwork(System.Net.IPAddress.Parse(parts[0]), int.Parse(parts[1])));
+    }
+});
+
 builder.Services.AddControllers();
 builder.Services.AddProblemDetails();
 
@@ -175,12 +200,14 @@ if (app.Environment.IsDevelopment())
     app.MapScalarApiReference().AllowAnonymous();
 }
 
+app.UseForwardedHeaders();
 app.UseHttpsRedirection();
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseCors(FrontendCorsPolicy);
 app.UseAuthentication();
 app.UseMiddleware<MembershipValidationMiddleware>();
 app.UseAuthorization();
+app.UseRateLimiter();
 if (jobOptions.RunsApi)
 {
     app.MapControllers();

@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 
-import { acceptInvitation, ApiError, login, register } from "@/lib/api";
+import { acceptInvitation, ApiError, login, logout, register } from "@/lib/api";
 import { safeNextPath } from "@/lib/auth-types";
 import { clearSession, setSession } from "@/lib/session";
 
@@ -68,6 +68,11 @@ export async function acceptInvitationAction(_prev: AuthFormState, formData: For
 // Bearer tokens can't be revoked server-side, so signing out removes them from the browser;
 // the access token expires on its own within 30 minutes.
 export async function logoutAction(): Promise<void> {
+  try {
+    await logout();
+  } catch {
+    // Still sign out locally if the API is unreachable
+  }
   await clearSession();
   redirect("/login");
 }

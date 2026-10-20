@@ -13,6 +13,8 @@ public static class TransientErrors
         TimeoutException or TaskCanceledException => true,
         System.ClientModel.ClientResultException { Status: 429 or >= 500 } => true,
         Polly.CircuitBreaker.BrokenCircuitException => true,
+        Polly.Timeout.TimeoutRejectedException => true,
+        Resilience.AiBusyException => true,
         _ => ex.InnerException is not null && IsTransient(ex.InnerException),
     };
 }
