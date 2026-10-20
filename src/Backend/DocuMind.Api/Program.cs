@@ -20,6 +20,7 @@ using Microsoft.Extensions.Options;
 using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.AddDocuMindObservability(builder.Configuration["Jobs:Mode"] is "Worker" ? "documind-worker" : "documind-api");
 
 const string FrontendCorsPolicy = "Frontend";
 
@@ -208,6 +209,7 @@ app.UseAuthentication();
 app.UseMiddleware<MembershipValidationMiddleware>();
 app.UseAuthorization();
 app.UseRateLimiter();
+app.MapDocuMindHealth();
 if (jobOptions.RunsApi)
 {
     app.MapControllers();

@@ -83,10 +83,12 @@ public class JobWorker(
             return true;
         }
 
+        var started = System.Diagnostics.Stopwatch.StartNew();
         try
         {
             await handler.HandleAsync(new JobContext(job.EntityId, job.Attempts, job.MaxAttempts), stoppingToken);
             await CompleteAsync(db, job, JobStatus.Succeeded, null, null);
+            JobTelemetry.Record(job.Type, "succeeded", started.Elapsed);
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
@@ -105,12 +107,14 @@ public class JobWorker(
             {
                 logger.LogError(ex, "Job {JobId} ({Type}) dead-lettered after {Attempts} attempts", job.Id, job.Type, job.Attempts);
                 await CompleteAsync(db, job, JobStatus.Dead, error, null);
+                JobTelemetry.Record(job.Type, "dead", started.Elapsed);
             }
             else
             {
                 var delay = Backoff(job.Attempts);
                 logger.LogWarning(ex, "Job {JobId} ({Type}) failed on attempt {Attempt}, retrying in {Delay}", job.Id, job.Type, job.Attempts, delay);
                 await CompleteAsync(db, job, JobStatus.Pending, error, DateTime.UtcNow + delay);
+                JobTelemetry.Record(job.Type, "retried", started.Elapsed);
             }
         }
 
@@ -191,4 +195,17 @@ public static class JobTelemetry
 {
     public const string SourceName = "DocuMind.Jobs";
     public static readonly System.Diagnostics.ActivitySource Source = new(SourceName);
+
+    public static readonly System.Diagnostics.Metrics.Meter Meter = new(SourceName);
+    private static readonly System.Diagnostics.Metrics.Counter<long> Processed =
+        Meter.CreateCounter<long>("documind.jobs.processed", description: "Job executions by outcome (succeeded, retried, dead)");
+    private static readonly System.Diagnostics.Metrics.Histogram<double> Duration =
+        Meter.CreateHistogram<double>("documind.jobs.duration", "s", "Job handler duration");
+
+    public static void Record(string type, string outcome, TimeSpan elapsed)
+    {
+        var tags = new System.Diagnostics.TagList { { "job.type", type }, { "outcome", outcome } };
+        Processed.Add(1, tags);
+        Duration.Record(elapsed.TotalSeconds, tags);
+    }
 }
