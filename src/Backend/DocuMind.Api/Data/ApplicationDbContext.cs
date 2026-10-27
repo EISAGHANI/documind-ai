@@ -1,4 +1,5 @@
 using DocuMind.Api.Entities;
+using DocuMind.Api.Jobs;
 using DocuMind.Api.Tenancy;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
@@ -28,9 +29,16 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, IdentityR
     public DbSet<AuditCheck> AuditChecks => Set<AuditCheck>();
     public DbSet<AuditRun> AuditRuns => Set<AuditRun>();
     public DbSet<AuditFinding> AuditFindings => Set<AuditFinding>();
+    public DbSet<Job> Jobs => Set<Job>();
+    public DbSet<ChatConversation> ChatConversations => Set<ChatConversation>();
+    public DbSet<ChatMessageEntity> ChatMessages => Set<ChatMessageEntity>();
+    public DbSet<ActivityLogEntry> ActivityLog => Set<ActivityLogEntry>();
 
     // Read on every query, so each request only sees rows for its own tenant
     private Guid CurrentTenantId => _tenantProvider.TenantId;
+
+    // Used by the optional row-level-security interceptor
+    internal Guid TenantIdForConnection => _tenantProvider.TenantId;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -48,6 +56,7 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, IdentityR
             entity.Property(e => e.Status).HasConversion<string>().HasMaxLength(20);
             entity.Property(e => e.ProcessingError).HasMaxLength(1000);
             entity.HasIndex(e => e.TenantId);
+            entity.HasIndex(e => new { e.TenantId, e.Status, e.UploadedAt });
             entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
         });
 
@@ -62,11 +71,18 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, IdentityR
                 .OnDelete(DeleteBehavior.Cascade);
             entity.HasIndex(e => new { e.DocumentId, e.ChunkIndex }).IsUnique();
             entity.HasIndex(e => e.TenantId);
+            entity.HasIndex(e => new { e.TenantId, e.DocumentId });
+
+            entity.HasGeneratedTsVectorColumn(e => e.SearchVector, DocumentChunk.TextSearchConfig, e => e.Content)
+                .HasIndex(e => e.SearchVector)
+                .HasMethod("GIN");
 
             // HNSW index for fast cosine-similarity search
             entity.HasIndex(e => e.Embedding)
                 .HasMethod("hnsw")
-                .HasOperators("vector_cosine_ops");
+                .HasOperators("vector_cosine_ops")
+                .HasStorageParameter("m", 16)
+                .HasStorageParameter("ef_construction", 64);
 
             entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
         });
@@ -164,6 +180,22 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, IdentityR
             entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
         });
 
+        modelBuilder.Entity<Job>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Type).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.Status).HasConversion<string>().HasMaxLength(20);
+            entity.Property(e => e.LockedBy).HasMaxLength(200);
+            entity.Property(e => e.LastError).HasMaxLength(2000);
+            entity.Property(e => e.CorrelationId).HasMaxLength(64);
+
+            // Polling index, and idempotent enqueue: at most one active job per type + entity
+            entity.HasIndex(e => new { e.Status, e.RunAfter });
+            entity.HasIndex(e => new { e.Type, e.EntityId })
+                .IsUnique()
+                .HasFilter("\"Status\" IN ('Pending', 'Running')");
+        });
+
         modelBuilder.Entity<AuditFinding>(entity =>
         {
             entity.HasKey(e => e.Id);
@@ -175,6 +207,42 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser, IdentityR
             entity.OwnsMany(e => e.Evidence, evidence => evidence.ToJson());
             entity.HasOne(e => e.Run).WithMany(r => r.Findings).HasForeignKey(e => e.RunId).OnDelete(DeleteBehavior.Cascade);
             entity.HasQueryFilter(e => e.Run.TenantId == CurrentTenantId);
+        });
+
+        modelBuilder.Entity<ChatConversation>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Title).IsRequired().HasMaxLength(200);
+            entity.HasIndex(e => new { e.TenantId, e.UserId, e.UpdatedAt });
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        });
+
+        modelBuilder.Entity<ChatMessageEntity>(entity =>
+        {
+            entity.ToTable("ChatMessages");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Role).IsRequired().HasMaxLength(20);
+            entity.Property(e => e.Content).IsRequired();
+            entity.Property(e => e.SourcesJson).HasColumnType("jsonb");
+            entity.HasOne(e => e.Conversation).WithMany(c => c.Messages)
+                .HasForeignKey(e => e.ConversationId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(e => new { e.ConversationId, e.CreatedAt });
+            entity.HasIndex(e => e.TenantId);
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
+        });
+
+        modelBuilder.Entity<ActivityLogEntry>(entity =>
+        {
+            entity.ToTable("ActivityLog");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Action).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.EntityType).HasMaxLength(100);
+            entity.Property(e => e.EntityId).HasMaxLength(100);
+            entity.Property(e => e.Detail).HasMaxLength(1000);
+            entity.Property(e => e.IpAddress).HasMaxLength(64);
+            entity.Property(e => e.CorrelationId).HasMaxLength(64);
+            entity.HasIndex(e => new { e.TenantId, e.CreatedAt });
+            entity.HasQueryFilter(e => e.TenantId == CurrentTenantId);
         });
     }
 }

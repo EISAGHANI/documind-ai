@@ -1,13 +1,26 @@
 using DocuMind.Api.ApiKeys;
 using DocuMind.Api.Entities;
+using DocuMind.Api.Resilience;
 using Microsoft.Extensions.Options;
 
 namespace DocuMind.Api.Chat;
 
 // Builds the chat model for a tenant from the provider, key and model chosen in Settings
-public class ChatModelFactory(ApiKeyStore keys, AiClientCache clients, IOptions<ClaudeOptions> claudeOptions)
+public class ChatModelFactory(
+    ApiKeyStore keys,
+    AiClientCache clients,
+    IOptions<ClaudeOptions> claudeOptions,
+    AiConcurrencyGate gate,
+    AiCircuitBreakers breakers,
+    IOptions<AiLimitsOptions> limits)
 {
     public async Task<IChatModel> CreateAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        var inner = await CreateInnerAsync(tenantId, cancellationToken);
+        return new ResilientChatModel(inner, tenantId, gate, breakers, limits.Value);
+    }
+
+    private async Task<IChatModel> CreateInnerAsync(Guid tenantId, CancellationToken cancellationToken)
     {
         var settings = await keys.GetSettingsAsync(tenantId, cancellationToken);
         var provider = settings.ChatProvider

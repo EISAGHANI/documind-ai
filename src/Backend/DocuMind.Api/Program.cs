@@ -4,9 +4,13 @@ using DocuMind.Api.Chat;
 using DocuMind.Api.Data;
 using DocuMind.Api.Embeddings;
 using DocuMind.Api.Entities;
+using DocuMind.Api.Jobs;
+using DocuMind.Api.Observability;
 using DocuMind.Api.Processing;
+using DocuMind.Api.Resilience;
 using DocuMind.Api.Storage;
 using DocuMind.Api.Tenancy;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Authentication.BearerToken;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
@@ -16,13 +20,21 @@ using Microsoft.Extensions.Options;
 using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.AddDocuMindObservability(builder.Configuration["Jobs:Mode"] is "Worker" ? "documind-worker" : "documind-api");
 
 const string FrontendCorsPolicy = "Frontend";
 
 // 1. Register DbContext with PostgreSQL + pgvector
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+builder.Services.Configure<RowLevelSecurityOptions>(builder.Configuration.GetSection("RowLevelSecurity"));
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseNpgsql(connectionString, npgsql => npgsql.UseVector()));
+{
+    options.UseNpgsql(connectionString, npgsql => npgsql.UseVector());
+    if (builder.Configuration.GetValue<bool>("RowLevelSecurity:Enabled"))
+    {
+        options.AddInterceptors(new TenantRlsConnectionInterceptor());
+    }
+});
 
 // 2. Sign-in with ASP.NET Core Identity. Tokens are Identity's bearer tokens (protected with Data
 // Protection, see section 5); the company and role are claims added by TenantClaimsPrincipalFactory.
@@ -56,9 +68,43 @@ builder.Services.AddMemoryCache();
 // 3. Tenancy and file storage
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ITenantProvider, ClaimsTenantProvider>();
-builder.Services.AddSingleton<IFileStorage, LocalFileStorage>();
+builder.Services.AddScoped<ICorrelationIdAccessor, HttpCorrelationIdAccessor>();
 
-// 4. Document processing: Voyage embeddings + background worker
+// Files: Storage:Provider = Local (default, dev) | S3 | AzureBlob. Use S3/AzureBlob with more than one instance.
+switch (builder.Configuration["Storage:Provider"]?.ToLowerInvariant())
+{
+    case "s3":
+        builder.Services.Configure<S3StorageOptions>(builder.Configuration.GetSection("Storage:S3"));
+        builder.Services.AddSingleton<IFileStorage, S3FileStorage>();
+        break;
+    case "azureblob":
+        builder.Services.Configure<AzureBlobStorageOptions>(builder.Configuration.GetSection("Storage:AzureBlob"));
+        builder.Services.AddSingleton<IFileStorage, AzureBlobFileStorage>();
+        break;
+    default:
+        builder.Services.AddSingleton<IFileStorage, LocalFileStorage>();
+        break;
+}
+
+// Shared state: Redis:ConnectionString enables a distributed cache and shared Data Protection keys.
+// Without it everything stays in memory, which is fine for a single instance.
+var redisConnection = builder.Configuration["Redis:ConnectionString"];
+if (!string.IsNullOrWhiteSpace(redisConnection))
+{
+    builder.Services.AddSingleton<StackExchange.Redis.IConnectionMultiplexer>(
+        _ => StackExchange.Redis.ConnectionMultiplexer.Connect(redisConnection));
+    builder.Services.AddStackExchangeRedisCache(o =>
+    {
+        o.Configuration = redisConnection;
+        o.InstanceName = "documind:";
+    });
+}
+else
+{
+    builder.Services.AddDistributedMemoryCache();
+}
+
+// 4. Document processing: Voyage embeddings + durable background jobs
 builder.Services.Configure<VoyageOptions>(builder.Configuration.GetSection(VoyageOptions.SectionName));
 builder.Services.AddHttpClient<IEmbeddingService, VoyageEmbeddingService>((services, client) =>
     {
@@ -74,15 +120,28 @@ builder.Services.AddHttpClient<IEmbeddingService, VoyageEmbeddingService>((servi
         resilience.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(120);
         resilience.TotalRequestTimeout.Timeout = TimeSpan.FromMinutes(5);
     });
-builder.Services.AddSingleton<IDocumentProcessingQueue, DocumentProcessingQueue>();
+builder.Services.Configure<JobOptions>(builder.Configuration.GetSection(JobOptions.SectionName));
+builder.Services.AddScoped<IJobQueue, JobQueue>();
+builder.Services.AddScoped<DocuMind.Api.Activity.IActivityLog, DocuMind.Api.Activity.ActivityLogWriter>();
+builder.Services.AddScoped<IDocumentProcessingQueue, DocumentProcessingQueue>();
 builder.Services.AddScoped<DocumentProcessor>();
-builder.Services.AddHostedService<DocumentProcessingWorker>();
+builder.Services.AddScoped<IJobHandler, DocumentProcessingJobHandler>();
+var jobOptions = builder.Configuration.GetSection(JobOptions.SectionName).Get<JobOptions>() ?? new JobOptions();
+if (jobOptions.RunsWorker)
+{
+    builder.Services.AddHostedService<JobWorker>();
+}
 
 // 5. Bring-your-own-key: tenants' AI provider keys, encrypted with Data Protection.
 // Set DataProtection:KeysPath in production so the encryption keys survive restarts and are shared
 // between instances; without it saved API keys become unreadable when the key ring is lost.
 var dataProtection = builder.Services.AddDataProtection().SetApplicationName("DocuMind");
-if (builder.Configuration["DataProtection:KeysPath"] is { Length: > 0 } keysPath)
+if (!string.IsNullOrWhiteSpace(redisConnection))
+{
+    dataProtection.PersistKeysToStackExchangeRedis(
+        () => StackExchange.Redis.ConnectionMultiplexer.Connect(redisConnection).GetDatabase(), "documind:dataprotection-keys");
+}
+else if (builder.Configuration["DataProtection:KeysPath"] is { Length: > 0 } keysPath)
 {
     dataProtection.PersistKeysToFileSystem(new DirectoryInfo(keysPath));
 }
@@ -99,16 +158,38 @@ builder.Services.AddScoped<ChatService>();
 
 // Compliance audits: checklists evaluated in the background with the tenant's chosen model
 builder.Services.Configure<AuditOptions>(builder.Configuration.GetSection(AuditOptions.SectionName));
-builder.Services.AddSingleton<AuditQueue>();
-builder.Services.AddSingleton<IAuditQueue>(services => services.GetRequiredService<AuditQueue>());
+builder.Services.AddScoped<IAuditQueue, AuditQueue>();
 builder.Services.AddScoped<AuditRunner>();
-builder.Services.AddHostedService<AuditWorker>();
+builder.Services.AddScoped<IJobHandler, AuditJobHandler>();
 
 // 7. Allow the Next.js frontend to call the API
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
 builder.Services.AddCors(options =>
     options.AddPolicy(FrontendCorsPolicy, policy =>
         policy.WithOrigins(allowedOrigins).AllowAnyHeader().AllowAnyMethod()));
+
+// Limits on concurrent/slow AI calls, per-tenant request rate limits and quotas
+builder.Services.Configure<AiLimitsOptions>(builder.Configuration.GetSection("AiLimits"));
+builder.Services.AddSingleton<AiConcurrencyGate>();
+builder.Services.AddSingleton<AiCircuitBreakers>();
+builder.Services.AddDocuMindRateLimiting(builder.Configuration);
+
+// Behind Next.js or a load balancer the real client IP arrives in X-Forwarded-For
+builder.Services.Configure<ForwardedHeadersOptions>(o =>
+{
+    o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    o.KnownIPNetworks.Clear();
+    o.KnownProxies.Clear();
+    foreach (var proxy in builder.Configuration.GetSection("ForwardedHeaders:KnownProxies").Get<string[]>() ?? [])
+    {
+        o.KnownProxies.Add(System.Net.IPAddress.Parse(proxy));
+    }
+    foreach (var network in builder.Configuration.GetSection("ForwardedHeaders:KnownNetworks").Get<string[]>() ?? [])
+    {
+        var parts = network.Split('/');
+        o.KnownIPNetworks.Add(new System.Net.IPNetwork(System.Net.IPAddress.Parse(parts[0]), int.Parse(parts[1])));
+    }
+});
 
 builder.Services.AddControllers();
 builder.Services.AddProblemDetails();
@@ -117,6 +198,19 @@ builder.Services.AddProblemDetails();
 builder.Services.AddOpenApi();
 
 var app = builder.Build();
+
+// `DocuMind.Api --migrate` applies pending EF migrations and exits. Run it as a one-off job
+// (see the `migrate` service in docker-compose.yml) so API and worker replicas never race to migrate.
+if (args.Contains("--migrate"))
+{
+    await using var scope = app.Services.CreateAsyncScope();
+    var migrationDb = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+    var pending = (await migrationDb.Database.GetPendingMigrationsAsync()).ToList();
+    app.Logger.LogInformation("Applying {Count} pending migration(s): {Migrations}", pending.Count, string.Join(", ", pending));
+    await migrationDb.Database.MigrateAsync();
+    app.Logger.LogInformation("Database is up to date");
+    return;
+}
 
 // 9. Enable OpenAPI endpoint and Scalar UI in Development
 if (app.Environment.IsDevelopment())
@@ -128,11 +222,21 @@ if (app.Environment.IsDevelopment())
     app.MapScalarApiReference().AllowAnonymous();
 }
 
+app.UseForwardedHeaders();
 app.UseHttpsRedirection();
+app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseCors(FrontendCorsPolicy);
 app.UseAuthentication();
 app.UseMiddleware<MembershipValidationMiddleware>();
 app.UseAuthorization();
-app.MapControllers();
+app.UseRateLimiter();
+app.MapDocuMindHealth();
+if (jobOptions.RunsApi)
+{
+    app.MapControllers();
+}
 
 app.Run();
+
+// Lets integration tests use WebApplicationFactory<Program>
+public partial class Program;

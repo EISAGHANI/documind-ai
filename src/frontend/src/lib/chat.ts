@@ -12,6 +12,7 @@ export type ChatSource = {
 export type AnswerSegment = { text: string; citations: number[] };
 
 export type ChatStreamEvent =
+  | { type: "conversation"; conversationId: string }
   | { type: "sources"; sources: ChatSource[] }
   | { type: "block" }
   | { type: "text"; text: string }
@@ -44,6 +45,9 @@ export async function* readChatStream(body: ReadableStream<Uint8Array>): AsyncGe
 
       const payload = data ? JSON.parse(data) : {};
       switch (name) {
+        case "conversation":
+          yield { type: "conversation", conversationId: payload.conversationId };
+          break;
         case "sources":
           yield { type: "sources", sources: payload };
           break;

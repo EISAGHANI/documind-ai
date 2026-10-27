@@ -10,6 +10,7 @@ import type {
 import type { CurrentUser, PendingInvitation, InvitationPreview, TeamMember, TeamRole } from "./auth-types";
 import type { DocumentSummary } from "./documents";
 import { getSession, type TokenResponse } from "./session";
+import { forwardingHeaders } from "./trace";
 import type { AiProviderStatus, AiSettings, ProviderId } from "./settings";
 
 // The browser never calls the .NET API directly: requests go through the Next.js server,
@@ -27,6 +28,7 @@ export class ApiError extends Error {
 
 export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers);
+  for (const [name, value] of Object.entries(await forwardingHeaders())) headers.set(name, value);
   const session = await getSession();
   if (session) {
     headers.set("Authorization", `Bearer ${session.accessToken}`);
@@ -36,10 +38,12 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
 }
 
 // For sign-in and sign-up calls, which must not carry an old session
-function publicFetch(path: string, body?: unknown): Promise<Response> {
+async function publicFetch(path: string, body?: unknown): Promise<Response> {
+  const headers = new Headers(await forwardingHeaders());
+  if (body !== undefined) headers.set("Content-Type", "application/json");
   return fetch(`${API_URL}${path}`, {
     method: body === undefined ? "GET" : "POST",
-    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    headers,
     body: body === undefined ? undefined : JSON.stringify(body),
     cache: "no-store",
   });
@@ -61,6 +65,11 @@ async function toApiError(response: Response): Promise<ApiError> {
   }
 
   return new ApiError(message, response.status);
+}
+
+export async function logout(): Promise<void> {
+  const response = await apiFetch("/api/auth/logout", { method: "POST" });
+  if (!response.ok && response.status !== 401) throw await toApiError(response);
 }
 
 export async function listDocuments(): Promise<DocumentSummary[]> {
